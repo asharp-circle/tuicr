@@ -557,6 +557,9 @@ impl App {
             forge_review_summaries: Vec::new(),
             forge_review_threads_loading: false,
             pr_threads_rx: None,
+            pr_delete_rx: None,
+            pr_thread_resolution_rx: None,
+            pr_viewer_login: None,
             forge_config: crate::config::ForgeConfig::default(),
             username: crate::model::comment::DEFAULT_AUTHOR.to_string(),
             submit_state: None,
@@ -980,6 +983,7 @@ impl App {
         app.canonical_resolved = true;
         app.current_pr_head = Some(details_for_threads.head_sha.clone());
         app.commit_selection_start = commit_selection;
+        app.pr_viewer_login = review_metadata.viewer_login.clone();
         let since_last_review_message =
             app.apply_pr_commit_selector(commits_for_selector, review_metadata);
         if matches!(&app.diff_source, DiffSource::PullRequest(_))

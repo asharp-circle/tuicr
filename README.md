@@ -313,6 +313,8 @@ A first-session cheatsheet. Press `?` inside tuicr for the full reference.
 | `i` / `e` (file tree) | Filter files in / out by regex; narrows the tree **and** the diff |
 | `I` / `E` (file tree) | Clear the include / exclude filter |
 | `c` / `C` | Add line / file comment |
+| `dd` | Delete a local draft or your GitHub inline comment; clear a pending review summary (submitted summaries and other forges' remote comments cannot be deleted) |
+| `x` | Resolve/reopen a GitHub review thread at the cursor (`:comments all` shows resolved threads for reopening) |
 | `v` / `V` | Visual mode (range comment) |
 | `r` | Toggle file reviewed |
 | `R` | Toggle hunk reviewed |

@@ -625,6 +625,7 @@ mod tests {
             state: RemoteReviewState::ChangesRequested,
             created_at: None,
             url: "https://example.com/review".to_string(),
+            database_id: None,
         }];
         app.forge_review_threads = vec![RemoteReviewThread {
             id: "thread-1".to_string(),
@@ -640,6 +641,8 @@ mod tests {
                 created_at: None,
                 in_reply_to: None,
                 url: "https://example.com/comment".to_string(),
+                review_id: None,
+                review_database_id: None,
             }],
         }];
         // `sort_files_by_directory` reorders diff_files by parent directory,

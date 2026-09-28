@@ -1,9 +1,8 @@
 //! Remote review comment/thread models.
 //!
 //! These types carry existing GitHub review discussions into the App for
-//! read-only display, filtering, and export. They are deliberately
-//! source-of-truth-on-remote: we never mutate, reply to, or persist them
-//! locally past the in-memory cache.
+//! display, filtering, and export. They are source-of-truth-on-remote:
+//! deletions of viewer-owned comments go through the forge API, not the cache.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -45,6 +44,10 @@ pub struct RemoteReviewComment {
     pub in_reply_to: Option<String>,
     /// Permalink to the comment on the forge.
     pub url: String,
+    #[serde(default)]
+    pub review_id: Option<String>,
+    #[serde(default)]
+    pub review_database_id: Option<String>,
 }
 
 /// State of a remote review at submit time. GitHub exposes one of
@@ -101,6 +104,8 @@ pub struct RemoteReviewSummary {
     pub created_at: Option<DateTime<Utc>>,
     /// Permalink to the review on the forge.
     pub url: String,
+    #[serde(default)]
+    pub database_id: Option<String>,
 }
 
 /// A discussion thread on a forge — one root comment plus zero or more replies.
@@ -292,6 +297,8 @@ mod tests {
                 created_at: None,
                 in_reply_to: None,
                 url: format!("https://example.com/{id}"),
+                review_id: None,
+                review_database_id: None,
             }],
         }
     }

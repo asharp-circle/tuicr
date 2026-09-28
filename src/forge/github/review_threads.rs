@@ -67,6 +67,8 @@ struct GhAuthor {
 struct GhReviewComment {
     id: String,
     #[serde(default)]
+    pull_request_review: Option<GhReviewRef>,
+    #[serde(default)]
     body: String,
     #[serde(default)]
     author: Option<GhAuthor>,
@@ -81,6 +83,14 @@ struct GhReviewComment {
 #[derive(Debug, Deserialize)]
 struct GhReplyRef {
     id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhReviewRef {
+    id: String,
+    #[serde(default)]
+    full_database_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -228,6 +238,13 @@ fn convert_comment(raw: GhReviewComment) -> RemoteReviewComment {
         created_at: raw.created_at,
         in_reply_to: raw.reply_to.map(|r| r.id),
         url: raw.url.unwrap_or_default(),
+        review_id: raw
+            .pull_request_review
+            .as_ref()
+            .map(|review| review.id.clone()),
+        review_database_id: raw
+            .pull_request_review
+            .and_then(|review| review.full_database_id),
     }
 }
 
@@ -259,6 +276,7 @@ pub(crate) fn build_query(after_cursor: Option<&str>) -> String {
               createdAt
               url
               replyTo {{ id }}
+              pullRequestReview {{ id fullDatabaseId }}
             }}
           }}
         }}

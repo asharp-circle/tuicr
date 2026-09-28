@@ -45,6 +45,17 @@ impl App {
         self.forge_review_summaries = Vec::new();
         self.forge_review_threads_loading = false;
         self.pr_threads_rx = None;
+        if self.pr_thread_resolution_rx.take().is_some() {
+            self.set_warning(
+                "PR changed while updating a thread; refresh to verify the GitHub result",
+            );
+        }
+        if self.pr_delete_rx.take().is_some() {
+            self.set_warning(
+                "PR changed while deleting a comment; refresh to verify the GitHub result",
+            );
+        }
+        self.pr_viewer_login = review_metadata.viewer_login.clone();
         // Latest known remote head — equal to the session head at open time;
         // refreshed by future `gh pr view` calls in PR 6.
         self.current_pr_head = Some(details.head_sha.clone());
@@ -591,6 +602,7 @@ impl App {
                 self.set_message("Reloaded PR at new head".to_string());
             }
         } else {
+            self.pr_viewer_login = opened.review_metadata.viewer_login.clone();
             self.set_pr_last_reviewed_commit_from_metadata(
                 &opened.commits,
                 &opened.review_metadata,
@@ -688,6 +700,7 @@ impl App {
         } else {
             // Same head: re-parse the diff to pick up any side-channel
             // changes (rare), but keep the session intact.
+            self.pr_viewer_login = opened.review_metadata.viewer_login.clone();
             self.set_pr_last_reviewed_commit_from_metadata(
                 &opened.commits,
                 &opened.review_metadata,
@@ -1058,7 +1071,10 @@ impl App {
         details: &crate::forge::traits::PullRequestDetails,
         local_checkout: Option<std::path::PathBuf>,
     ) {
-        self.forge_review_threads.clear();
+        if self.pr_thread_resolution_rx.is_some() {
+            return;
+        }
+        // Keep the last known rows visible until the new snapshot arrives.
         self.forge_review_threads_loading = true;
 
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1132,6 +1148,9 @@ impl App {
                     .map(|(r, n, sha)| *r == repository && *n == pr_number && *sha == head_sha)
                     .unwrap_or(false);
                 if !still_relevant {
+                    return;
+                }
+                if self.pr_delete_rx.is_some() || self.pr_thread_resolution_rx.is_some() {
                     return;
                 }
                 let mut had_error = false;

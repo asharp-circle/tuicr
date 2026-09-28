@@ -213,7 +213,11 @@ pub enum MappedComment {
 
 /// Compute the inline body for `comment` honoring the `[TYPE]` prefix toggle.
 /// File-level bodies are prefixed `[TYPE] File-level:`.
-fn build_inline_body(comment: &Comment, file_level: bool, ctx: SubmitContext<'_>) -> String {
+pub(crate) fn build_inline_body(
+    comment: &Comment,
+    file_level: bool,
+    ctx: SubmitContext<'_>,
+) -> String {
     if !ctx.forge.comment_type_prefix {
         return comment.content.clone();
     }

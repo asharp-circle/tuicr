@@ -38,6 +38,7 @@ pub enum Action {
     // Review actions
     ToggleReviewed,
     ToggleHunkReviewed,
+    ToggleRemoteThreadResolution,
     AddLineComment,
     AddFileComment,
     EditComment,
@@ -251,6 +252,7 @@ fn map_normal_mode_with_q_quits(key: KeyEvent, leader_key: char, q_quits: bool) 
         // Review actions
         (KeyCode::Char('r'), KeyModifiers::NONE) => Action::ToggleReviewed,
         (KeyCode::Char('R'), _) => Action::ToggleHunkReviewed,
+        (KeyCode::Char('x'), KeyModifiers::NONE) => Action::ToggleRemoteThreadResolution,
         (KeyCode::Char('c'), KeyModifiers::NONE) => Action::AddLineComment,
         (KeyCode::Char('C'), _) => Action::AddFileComment,
         (KeyCode::Char('i'), KeyModifiers::NONE) => Action::EditComment,
@@ -884,6 +886,18 @@ mod tests {
     fn should_map_uppercase_r_to_toggle_hunk_reviewed_in_normal_mode() {
         let action = map_normal_mode(key_shift('R'), DEFAULT_LEADER_KEY);
         assert_eq!(action, Action::ToggleHunkReviewed);
+    }
+
+    #[test]
+    fn should_map_x_to_thread_resolution_in_normal_mode() {
+        assert_eq!(
+            map_normal_mode(key(KeyCode::Char('x')), DEFAULT_LEADER_KEY),
+            Action::ToggleRemoteThreadResolution
+        );
+        assert_ne!(
+            map_normal_mode(key_shift('X'), DEFAULT_LEADER_KEY),
+            Action::ToggleRemoteThreadResolution
+        );
     }
 
     #[test]

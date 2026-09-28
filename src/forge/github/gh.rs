@@ -415,6 +415,111 @@ where
         pair_metadata_with_patch(metadata, patch.as_bytes())
     }
 
+    fn current_viewer(&self, repo: &ForgeRepository) -> Result<Option<String>> {
+        let mut args = vec!["api".to_string(), "user".to_string()];
+        if repo.host != DEFAULT_GITHUB_HOST {
+            args.extend(["--hostname".to_string(), repo.host.clone()]);
+        }
+        let output = self.run_gh(args, &repo.host)?;
+        let user: serde_json::Value = serde_json::from_str(&output)?;
+        Ok(user
+            .get("login")
+            .and_then(|login| login.as_str())
+            .map(str::to_string))
+    }
+
+    fn set_review_thread_resolved(
+        &self,
+        repo: &ForgeRepository,
+        id: &str,
+        resolved: bool,
+    ) -> Result<()> {
+        let (mutation, field) = if resolved {
+            ("resolveReviewThread", "resolveReviewThread")
+        } else {
+            ("unresolveReviewThread", "unresolveReviewThread")
+        };
+        let mut args = vec![
+            "api".to_string(),
+            "graphql".to_string(),
+            "-f".to_string(),
+            format!(
+                "query=mutation($id: ID!) {{ {mutation}(input: {{threadId: $id}}) {{ thread {{ id isResolved }} }} }}"
+            ),
+            "-f".to_string(),
+            format!("id={id}"),
+        ];
+        if repo.host != DEFAULT_GITHUB_HOST {
+            args.extend(["--hostname".to_string(), repo.host.clone()]);
+        }
+        let output = self.run_gh(args, &repo.host)?;
+        let response: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(errors) = response.get("errors") {
+            return Err(TuicrError::Forge(format!(
+                "GitHub thread resolution failed: {errors}"
+            )));
+        }
+        let thread = response.pointer(&format!("/data/{field}/thread"));
+        if thread.and_then(|t| t.get("id")).and_then(|v| v.as_str()) != Some(id)
+            || thread
+                .and_then(|t| t.get("isResolved"))
+                .and_then(|v| v.as_bool())
+                != Some(resolved)
+        {
+            return Err(TuicrError::Forge(
+                "GitHub did not confirm thread resolution".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn delete_review_comment(&self, repo: &ForgeRepository, id: &str) -> Result<()> {
+        let mut args = vec!["api".to_string(), "graphql".to_string(),
+            "-f".to_string(), "query=mutation($id: ID!) { deletePullRequestReviewComment(input: {id: $id}) { clientMutationId } }".to_string(),
+            "-f".to_string(), format!("id={id}")];
+        if repo.host != DEFAULT_GITHUB_HOST {
+            args.extend(["--hostname".to_string(), repo.host.clone()]);
+        }
+        let output = self.run_gh(args, &repo.host)?;
+        let response: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(errors) = response.get("errors") {
+            return Err(TuicrError::Forge(format!(
+                "GitHub comment deletion failed: {errors}"
+            )));
+        }
+        if response
+            .pointer("/data/deletePullRequestReviewComment")
+            .is_none()
+        {
+            return Err(TuicrError::Forge(
+                "GitHub did not confirm comment deletion".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn delete_review(&self, repo: &ForgeRepository, id: &str) -> Result<()> {
+        let mut args = vec!["api".to_string(), "graphql".to_string(),
+            "-f".to_string(), "query=mutation($id: ID!) { updatePullRequestReview(input: {pullRequestReviewId: $id, body: \"\"}) { clientMutationId } }".to_string(),
+            "-f".to_string(), format!("id={id}")];
+        if repo.host != DEFAULT_GITHUB_HOST {
+            args.extend(["--hostname".to_string(), repo.host.clone()]);
+        }
+        let output = self.run_gh(args, &repo.host)?;
+        let response: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(errors) = response.get("errors") {
+            return Err(TuicrError::Forge(format!(
+                "GitHub review deletion failed: {errors}"
+            )));
+        }
+        if response.pointer("/data/updatePullRequestReview").is_none() {
+            return Err(TuicrError::Forge(
+                "GitHub did not confirm review summary deletion".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn list_review_threads(&self, pr: &PullRequestDetails) -> Result<Vec<RemoteReviewThread>> {
         let mut all: Vec<RemoteReviewThread> = Vec::new();
         let mut cursor: Option<String> = None;
@@ -1306,6 +1411,116 @@ index 1111111..2222222 100644
 
     fn repo() -> ForgeRepository {
         ForgeRepository::github("github.com", "agavra", "tuicr")
+    }
+
+    #[test]
+    fn deletes_owned_comment_and_clears_pending_review_body_via_graphql_with_host() {
+        struct DeleteRunner(std::cell::RefCell<Vec<Vec<String>>>);
+        impl GhCommandRunner for DeleteRunner {
+            fn run(&self, args: &[String]) -> GhCommandResult<String> {
+                self.0.borrow_mut().push(args.to_vec());
+                if args
+                    .iter()
+                    .any(|a| a.contains("deletePullRequestReviewComment"))
+                {
+                    Ok(
+                        r#"{"data":{"deletePullRequestReviewComment":{"clientMutationId":null}}}"#
+                            .into(),
+                    )
+                } else {
+                    Ok(r#"{"data":{"updatePullRequestReview":{"clientMutationId":null}}}"#.into())
+                }
+            }
+        }
+        let backend = GitHubGhBackend::with_runner(None, DeleteRunner(Default::default()));
+        let repo = ForgeRepository::github("github.example.com", "owner", "repo");
+        backend.delete_review_comment(&repo, "PRRC_123").unwrap();
+        backend.delete_review(&repo, "PRR_456").unwrap();
+        let calls = backend.runner.0.borrow();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].contains(&"id=PRRC_123".to_string()));
+        assert!(calls[1].contains(&"id=PRR_456".to_string()));
+        assert!(
+            calls[1]
+                .iter()
+                .any(|arg| arg.contains("updatePullRequestReview") && arg.contains("body: \"\""))
+        );
+        assert!(calls.iter().all(|args| {
+            args.windows(2)
+                .any(|pair| pair == ["--hostname", "github.example.com"])
+        }));
+    }
+
+    #[test]
+    fn toggles_thread_resolution_with_validated_graphql_response_and_enterprise_host() {
+        struct ThreadRunner(std::cell::RefCell<Vec<Vec<String>>>);
+        impl GhCommandRunner for ThreadRunner {
+            fn run(&self, args: &[String]) -> GhCommandResult<String> {
+                self.0.borrow_mut().push(args.to_vec());
+                let resolved = args
+                    .iter()
+                    .any(|arg| arg.contains("{ resolveReviewThread("));
+                Ok(serde_json::json!({
+                    "data": { (if resolved { "resolveReviewThread" } else { "unresolveReviewThread" }): {
+                        "thread": { "id": "PRRT_1", "isResolved": resolved }
+                    }}
+                }).to_string())
+            }
+        }
+        let backend = GitHubGhBackend::with_runner(None, ThreadRunner(Default::default()));
+        let repo = ForgeRepository::github("github.example.com", "owner", "repo");
+        backend
+            .set_review_thread_resolved(&repo, "PRRT_1", true)
+            .unwrap();
+        backend
+            .set_review_thread_resolved(&repo, "PRRT_1", false)
+            .unwrap();
+        let calls = backend.runner.0.borrow();
+        assert_eq!(calls.len(), 2);
+        for args in calls.iter() {
+            assert!(args.contains(&"id=PRRT_1".to_string()));
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair == ["--hostname", "github.example.com"])
+            );
+            assert!(args.iter().any(|arg| arg.contains("threadId: $id")));
+        }
+    }
+
+    #[test]
+    fn thread_resolution_rejects_errors_and_unconfirmed_results() {
+        struct ErrorRunner(&'static str);
+        impl GhCommandRunner for ErrorRunner {
+            fn run(&self, _: &[String]) -> GhCommandResult<String> {
+                Ok(self.0.into())
+            }
+        }
+        for response in [
+            r#"{"errors":[{"message":"forbidden"}],"data":null}"#,
+            r#"{"data":{"resolveReviewThread":null}}"#,
+            r#"{"data":{"resolveReviewThread":{"thread":{"id":"wrong","isResolved":true}}}}"#,
+            r#"{"data":{"resolveReviewThread":{"thread":{"id":"PRRT_1","isResolved":false}}}}"#,
+        ] {
+            let backend = GitHubGhBackend::with_runner(None, ErrorRunner(response));
+            assert!(
+                backend
+                    .set_review_thread_resolved(&repo(), "PRRT_1", true)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn deletion_rejects_graphql_errors() {
+        struct ErrorRunner;
+        impl GhCommandRunner for ErrorRunner {
+            fn run(&self, _: &[String]) -> GhCommandResult<String> {
+                Ok(r#"{"errors":[{"message":"forbidden"}],"data":null}"#.into())
+            }
+        }
+        let backend = GitHubGhBackend::with_runner(None, ErrorRunner);
+        assert!(backend.delete_review_comment(&repo(), "id").is_err());
+        assert!(backend.delete_review(&repo(), "id").is_err());
     }
 
     #[test]

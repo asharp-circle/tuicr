@@ -550,7 +550,14 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
                 "  dd        ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw("Delete comment at cursor"),
+            Span::raw("Delete local/GitHub inline; clear pending review summary"),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "  x         ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Resolve/reopen GitHub thread at cursor (:comments all to reopen)"),
         ]),
         Line::from(vec![
             Span::styled(

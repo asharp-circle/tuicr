@@ -521,10 +521,8 @@ impl App {
         self.set_message(format!("Comment {}/{}", target_idx + 1, items.len()));
     }
 
-    /// True when the cursor sits on a local comment whose lifecycle state
-    /// has been pushed/submitted to the forge. Such comments are locked from
-    /// edit/delete in tuicr to prevent the local state from drifting from
-    /// what GitHub now stores.
+    /// True when the cursor sits on a local comment already pushed to the forge.
+    /// Editing stays locked; deleting requires a successful remote API call.
     pub fn cursor_on_locked_comment(&self) -> bool {
         let Some(location) = self.find_comment_at_cursor() else {
             return false;
@@ -567,11 +565,7 @@ impl App {
         }
     }
 
-    /// Find the comment at the current cursor position
-    /// True when the cursor is on a row that belongs to a fetched-from-GitHub
-    /// review thread. Remote threads are read-only in v1; surfaced as a
-    /// distinct condition so the handler can produce a clearer message than
-    /// the generic "no comment at cursor".
+    /// True when the cursor is on a fetched forge thread row.
     pub fn cursor_on_remote_thread(&self) -> bool {
         matches!(
             self.line_annotations.get(self.diff_state.cursor_line),
@@ -579,6 +573,7 @@ impl App {
         )
     }
 
+    /// Find the comment at the current cursor position.
     fn find_comment_at_cursor(&self) -> Option<CommentLocation> {
         let target = self.diff_state.cursor_line;
         let commit_set = self.selected_commit_set();
@@ -671,6 +666,107 @@ impl App {
         }
     }
 
+    pub fn toggle_remote_thread_resolution(&mut self) -> bool {
+        if self.forge_kind() != Some(crate::forge::traits::ForgeKind::GitHub) {
+            self.set_message("Thread resolution is only available for GitHub PRs");
+            return false;
+        }
+        let Some(AnnotatedLine::RemoteThreadLine { thread_idx, .. }) =
+            self.line_annotations.get(self.diff_state.cursor_line)
+        else {
+            self.set_message("Move cursor to a remote review thread");
+            return false;
+        };
+        let Some(thread) = self.forge_review_threads.get(*thread_idx) else {
+            return false;
+        };
+        if self.pr_thread_resolution_rx.is_some()
+            || self.pr_delete_rx.is_some()
+            || self.pr_threads_rx.is_some()
+            || self.forge_review_threads_loading
+        {
+            self.set_message("Wait for the current thread operation to finish");
+            return false;
+        }
+        let DiffSource::PullRequest(pr) = &self.diff_source else {
+            return false;
+        };
+        let key = pr.key.clone();
+        let thread_id = thread.id.clone();
+        let resolved = !thread.is_resolved;
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pr_thread_resolution_rx = Some(rx);
+        std::thread::spawn(move || {
+            let backend = super::create_forge_backend(&key.repository, None, false, false);
+            let result = backend
+                .set_review_thread_resolved(&key.repository, &thread_id, resolved)
+                .map_err(|e| e.to_string());
+            let _ = tx.send(PrThreadResolutionEvent {
+                key,
+                thread_id,
+                resolved,
+                result,
+            });
+        });
+        self.set_message(if resolved {
+            "Resolving GitHub thread…"
+        } else {
+            "Reopening GitHub thread…"
+        });
+        true
+    }
+
+    pub fn poll_pr_thread_resolution_events(&mut self) {
+        let Some(rx) = self.pr_thread_resolution_rx.as_ref() else {
+            return;
+        };
+        let event = match rx.try_recv() {
+            Ok(event) => event,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pr_thread_resolution_rx = None;
+                self.set_error("GitHub thread update failed: worker disconnected");
+                self.refetch_pr_threads();
+                return;
+            }
+        };
+        self.pr_thread_resolution_rx = None;
+        let DiffSource::PullRequest(pr) = &self.diff_source else {
+            return;
+        };
+        if pr.key != event.key {
+            return;
+        }
+        match event.result {
+            Ok(()) => {
+                if let Some(thread) = self
+                    .forge_review_threads
+                    .iter_mut()
+                    .find(|t| t.id == event.thread_id)
+                {
+                    thread.is_resolved = event.resolved;
+                    self.rebuild_annotations();
+                    self.diff_state.cursor_line = self
+                        .diff_state
+                        .cursor_line
+                        .min(self.line_annotations.len().saturating_sub(1));
+                    self.set_message(if event.resolved {
+                        "GitHub thread resolved"
+                    } else {
+                        "GitHub thread reopened"
+                    });
+                } else {
+                    self.set_warning("Thread updated on GitHub; refresh to see its current state");
+                }
+                self.refetch_pr_threads();
+            }
+            Err(error) => {
+                self.set_error(format!("GitHub thread update failed: {error}"));
+                self.refetch_pr_threads();
+            }
+        }
+    }
+
     /// Content of a remote review comment at the cursor.
     ///
     /// A remote thread is rendered after its anchor line, so accept both its
@@ -744,24 +840,352 @@ impl App {
             .map(|comment| comment.body.clone())
     }
 
-    /// Delete the comment at the current cursor position, if any
-    /// Returns true if a comment was deleted
+    fn local_comment_at(&self, location: &CommentLocation) -> Option<&Comment> {
+        match location {
+            CommentLocation::Review { index } => self.session.review_comments.get(*index),
+            CommentLocation::File { path, index } => {
+                self.session.files.get(path)?.file_comments.get(*index)
+            }
+            CommentLocation::Line {
+                path,
+                line,
+                side,
+                index,
+            } => self
+                .session
+                .files
+                .get(path)?
+                .line_comments
+                .get(line)?
+                .get(*index)
+                .filter(|c| c.side.unwrap_or(LineSide::New) == *side),
+        }
+    }
+
     pub fn delete_comment_at_cursor(&mut self) -> bool {
-        let Some(location) = self.find_comment_at_cursor() else {
-            return false;
-        };
-        if !self.session.remove_comment(&location) {
+        if self.pr_delete_rx.is_some() {
+            self.set_message("Comment deletion already in progress");
             return false;
         }
-        let message = match location {
-            CommentLocation::Review { .. } => "Review comment deleted".to_string(),
-            CommentLocation::File { .. } => "Comment deleted".to_string(),
-            CommentLocation::Line { line, .. } => format!("Comment on line {line} deleted"),
+        if self.pr_submit_rx.is_some() {
+            self.set_warning("Wait for the review submission before deleting a comment");
+            return false;
+        }
+        if let Some(location) = self.find_comment_at_cursor() {
+            let Some(comment) = self.local_comment_at(&location) else {
+                return false;
+            };
+            if comment.is_locked() {
+                let Some(viewer) = self.pr_viewer_login.as_deref() else {
+                    self.set_warning("Cannot verify the current forge user; comment not deleted");
+                    return false;
+                };
+                let DiffSource::PullRequest(pr) = &self.diff_source else {
+                    return false;
+                };
+                if pr.key.repository.kind != crate::forge::traits::ForgeKind::GitHub {
+                    self.set_warning("Remote comment deletion is not supported by this forge");
+                    return false;
+                }
+                let review_id = comment.remote_review_id.clone();
+                let remote_comment_id = comment.remote_comment_id.clone();
+                let remote_body = match &location {
+                    CommentLocation::Review { .. } => comment.content.clone(),
+                    CommentLocation::Line { .. } => crate::forge::submit::build_inline_body(
+                        comment,
+                        false,
+                        crate::forge::submit::SubmitContext::new(
+                            &self.forge_config,
+                            &self.comment_types,
+                        ),
+                    ),
+                    CommentLocation::File { .. } => crate::forge::submit::build_inline_body(
+                        comment,
+                        true,
+                        crate::forge::submit::SubmitContext::new(
+                            &self.forge_config,
+                            &self.comment_types,
+                        ),
+                    ),
+                };
+                let matched = match &location {
+                    CommentLocation::Review { .. } => self
+                        .forge_review_summaries
+                        .iter()
+                        .find(|s| {
+                            s.state == crate::forge::remote_comments::RemoteReviewState::Pending
+                                && s.author
+                                    .as_deref()
+                                    .is_some_and(|a| a.eq_ignore_ascii_case(viewer))
+                                && review_id.as_deref() == s.database_id.as_deref()
+                                && s.body == remote_body
+                                && self
+                                    .session
+                                    .review_comments
+                                    .iter()
+                                    .filter(|c| c.remote_review_id == review_id && c.is_locked())
+                                    .count()
+                                    == 1
+                        })
+                        .map(|s| RemoteDeleteTarget::Review(s.id.clone())),
+                    CommentLocation::Line {
+                        path, line, side, ..
+                    } => self
+                        .forge_review_threads
+                        .iter()
+                        .filter(|thread| {
+                            thread.path == path.to_string_lossy()
+                                && thread.line == Some(*line)
+                                && (thread.side
+                                    == crate::forge::remote_comments::RemoteCommentSide::Left)
+                                    == (*side == LineSide::Old)
+                        })
+                        .flat_map(|thread| &thread.comments)
+                        .find(|remote| {
+                            remote
+                                .author
+                                .as_deref()
+                                .is_some_and(|a| a.eq_ignore_ascii_case(viewer))
+                                && remote.body == remote_body
+                                && remote.review_database_id.as_deref() == review_id.as_deref()
+                                && remote_comment_id
+                                    .as_deref()
+                                    .is_none_or(|id| remote.id == id)
+                        })
+                        .map(|remote| RemoteDeleteTarget::Comment(remote.id.clone())),
+                    CommentLocation::File { path, .. } => self
+                        .forge_review_threads
+                        .iter()
+                        .filter(|thread| thread.path == path.to_string_lossy())
+                        .flat_map(|thread| &thread.comments)
+                        .find(|remote| {
+                            remote
+                                .author
+                                .as_deref()
+                                .is_some_and(|a| a.eq_ignore_ascii_case(viewer))
+                                && remote.body == remote_body
+                                && remote.review_database_id.as_deref() == review_id.as_deref()
+                                && remote_comment_id
+                                    .as_deref()
+                                    .is_none_or(|id| remote.id == id)
+                        })
+                        .map(|remote| RemoteDeleteTarget::Comment(remote.id.clone())),
+                };
+                let target = matched.or_else(|| {
+                    remote_comment_id.and_then(|id| {
+                        self.forge_review_threads
+                            .iter()
+                            .flat_map(|thread| &thread.comments)
+                            .find(|remote| {
+                                remote.id == id
+                                    && remote
+                                        .author
+                                        .as_deref()
+                                        .is_some_and(|a| a.eq_ignore_ascii_case(viewer))
+                            })
+                            .map(|_| RemoteDeleteTarget::Comment(id))
+                    })
+                });
+                let Some(target) = target else {
+                    self.set_warning("Unable to identify your pending GitHub comment; refresh with :e before deleting (submitted review summaries cannot be deleted)");
+                    return false;
+                };
+                return self.confirm_remote_comment_delete(target, Some(comment.id.clone()));
+            }
+            if self.session.remove_comment(&location) {
+                self.dirty = true;
+                self.set_message("Comment deleted");
+                self.rebuild_annotations();
+                return true;
+            }
+            return false;
+        }
+        let annotation = self.line_annotations.get(self.diff_state.cursor_line);
+        let remote = match annotation {
+            Some(AnnotatedLine::RemoteThreadLine {
+                thread_idx,
+                comment_idx,
+            }) => self
+                .forge_review_threads
+                .get(*thread_idx)
+                .and_then(|t| t.comments.get(*comment_idx))
+                .map(|c| (c.id.clone(), c.author.clone(), false)),
+            Some(AnnotatedLine::RemoteReviewSummaryLine { summary_idx }) => {
+                let summary = self.forge_review_summaries.get(*summary_idx);
+                if summary.is_some_and(|s| {
+                    s.state != crate::forge::remote_comments::RemoteReviewState::Pending
+                }) {
+                    self.set_warning("GitHub does not permit deleting submitted review summaries");
+                    return false;
+                }
+                summary.map(|s| (s.id.clone(), s.author.clone(), true))
+            }
+            _ => None,
         };
-        self.dirty = true;
-        self.set_message(message);
-        self.rebuild_annotations();
+        let Some((id, author, review)) = remote else {
+            self.set_message("No comment at cursor");
+            return false;
+        };
+        let Some(viewer) = self.pr_viewer_login.as_deref() else {
+            self.set_warning("Cannot verify the current forge user; comment not deleted");
+            return false;
+        };
+        if !author
+            .as_deref()
+            .is_some_and(|a| a.eq_ignore_ascii_case(viewer))
+        {
+            self.set_warning("Only your own comments can be deleted");
+            return false;
+        }
+        let target = if review {
+            RemoteDeleteTarget::Review(id)
+        } else {
+            RemoteDeleteTarget::Comment(id)
+        };
+        self.confirm_remote_comment_delete(target, None)
+    }
+
+    fn confirm_remote_comment_delete(
+        &mut self,
+        target: RemoteDeleteTarget,
+        local_id: Option<String>,
+    ) -> bool {
+        if self.forge_kind() != Some(crate::forge::traits::ForgeKind::GitHub) {
+            self.set_warning("Remote comment deletion is not supported by this forge");
+            return false;
+        }
+        self.enter_confirm_mode(ConfirmAction::DeleteRemoteComment { target, local_id });
         true
+    }
+
+    pub fn start_remote_comment_delete(
+        &mut self,
+        target: RemoteDeleteTarget,
+        local_id: Option<String>,
+    ) -> bool {
+        let DiffSource::PullRequest(pr) = &self.diff_source else {
+            return false;
+        };
+        if pr.key.repository.kind != crate::forge::traits::ForgeKind::GitHub {
+            self.set_warning("Remote comment deletion is not supported by this forge");
+            return false;
+        }
+        let Some(expected_viewer) = self.pr_viewer_login.clone() else {
+            self.set_warning("Cannot verify the current forge user; comment not deleted");
+            return false;
+        };
+        if self.pr_submit_rx.is_some()
+            || self.pr_delete_rx.is_some()
+            || self.pr_thread_resolution_rx.is_some()
+        {
+            self.set_warning("Wait for the current GitHub operation to finish");
+            return false;
+        }
+        let repository = pr.key.repository.clone();
+        let pr_number = pr.key.number;
+        let head_sha = pr.key.head_sha.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pr_delete_rx = Some(rx);
+        std::thread::spawn(move || {
+            let backend = super::create_forge_backend(&repository, None, false, false);
+            let result = backend
+                .current_viewer(&repository)
+                .and_then(|actual| match actual {
+                    Some(actual) if actual.eq_ignore_ascii_case(&expected_viewer) => Ok(()),
+                    _ => Err(TuicrError::Forge(
+                        "GitHub account changed; refresh the PR before deleting".into(),
+                    )),
+                })
+                .and_then(|()| match &target {
+                    RemoteDeleteTarget::Review(id) => backend.delete_review(&repository, id),
+                    RemoteDeleteTarget::Comment(id) => {
+                        backend.delete_review_comment(&repository, id)
+                    }
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(PrDeleteEvent::Done {
+                repository,
+                pr_number,
+                head_sha,
+                target,
+                local_id,
+                expected_viewer,
+                result,
+            });
+        });
+        self.set_message("Deleting comment from GitHub…");
+        true
+    }
+
+    pub fn poll_pr_delete_events(&mut self) {
+        let Some(rx) = self.pr_delete_rx.as_ref() else {
+            return;
+        };
+        let event = match rx.try_recv() {
+            Ok(event) => event,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pr_delete_rx = None;
+                self.set_warning("Comment deletion failed: worker disconnected");
+                return;
+            }
+        };
+        self.pr_delete_rx = None;
+        let PrDeleteEvent::Done {
+            repository,
+            pr_number,
+            head_sha,
+            target,
+            local_id,
+            expected_viewer,
+            result,
+        } = event;
+        let DiffSource::PullRequest(pr) = &self.diff_source else {
+            return;
+        };
+        if pr.key.repository != repository
+            || pr.key.number != pr_number
+            || pr.key.head_sha != head_sha
+            || self.pr_viewer_login.as_deref() != Some(expected_viewer.as_str())
+        {
+            return;
+        }
+        match result {
+            Ok(()) => {
+                if let Some(local_id) = local_id
+                    && let Some(location) = self.session.find_comment_by_id(&local_id)
+                    && self
+                        .session
+                        .remove_comment_matching(&location, |comment| comment.id == local_id)
+                {
+                    self.dirty = true;
+                }
+                match target {
+                    RemoteDeleteTarget::Comment(id) => {
+                        for thread in &mut self.forge_review_threads {
+                            thread.comments.retain(|c| c.id != id);
+                        }
+                        self.forge_review_threads.retain(|t| !t.comments.is_empty());
+                    }
+                    RemoteDeleteTarget::Review(id) => {
+                        self.forge_review_summaries.retain(|s| s.id != id);
+                    }
+                }
+                self.rebuild_annotations();
+                if let Err(error) = self.save_current_session_merging_external() {
+                    self.set_warning(format!(
+                        "Comment deleted on GitHub but session save failed: {error}"
+                    ));
+                } else {
+                    self.set_message("Comment deleted from GitHub");
+                }
+                self.refetch_pr_threads();
+            }
+            Err(error) => {
+                self.set_warning(format!("Comment deletion failed: {error}"));
+                self.refetch_pr_threads();
+            }
+        }
     }
 
     pub fn clear_comments(&mut self, scope: ClearScope) {

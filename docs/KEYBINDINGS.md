@@ -137,7 +137,8 @@ Shown below the file tree when local comments or visible remote PR threads exist
 | `C` | Add file comment |
 | `<leader>c` | Add review comment |
 | `v` / `V` | Enter visual mode for range comments |
-| `dd` | Delete comment at cursor |
+| `dd` | Delete a local draft or your GitHub inline comment at cursor; clear a pending review summary (submitted summaries and other forges' remote comments are unsupported) |
+| `x` | Resolve or reopen the GitHub review thread under the diff cursor (on its displayed comment or reply); use `:comments all` to show resolved threads for reopening |
 | `i` | Edit comment at cursor (vim: text cursor at start) |
 | `A` | Edit comment at cursor with text cursor at end (vim mode only) |
 | `e` | Open focused file in `$EDITOR` |

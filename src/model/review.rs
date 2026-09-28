@@ -235,23 +235,24 @@ impl ReviewSession {
     }
 
     pub(crate) fn remove_comment(&mut self, location: &CommentLocation) -> bool {
+        self.remove_comment_matching(location, |comment| !comment.is_locked())
+    }
+
+    pub(crate) fn remove_comment_matching(
+        &mut self,
+        location: &CommentLocation,
+        allowed: impl Fn(&Comment) -> bool,
+    ) -> bool {
         match location {
             CommentLocation::Review { index } => {
-                if self
-                    .review_comments
-                    .get(*index)
-                    .is_some_and(|comment| !comment.is_locked())
-                {
+                if self.review_comments.get(*index).is_some_and(&allowed) {
                     self.review_comments.remove(*index);
                     return true;
                 }
             }
             CommentLocation::File { path, index } => {
                 if let Some(review) = self.get_file_mut(path)
-                    && review
-                        .file_comments
-                        .get(*index)
-                        .is_some_and(|comment| !comment.is_locked())
+                    && review.file_comments.get(*index).is_some_and(&allowed)
                 {
                     review.file_comments.remove(*index);
                     return true;
@@ -266,7 +267,7 @@ impl ReviewSession {
                 if let Some(review) = self.get_file_mut(path)
                     && let Some(comments) = review.line_comments.get_mut(line)
                     && comments.get(*index).is_some_and(|comment| {
-                        !comment.is_locked() && comment.side.unwrap_or(LineSide::New) == *side
+                        allowed(comment) && comment.side.unwrap_or(LineSide::New) == *side
                     })
                 {
                     comments.remove(*index);

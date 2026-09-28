@@ -452,6 +452,8 @@ fn main() -> anyhow::Result<()> {
         app.poll_pr_range_reload_events();
         app.poll_pr_threads_events();
         app.poll_pr_submit_events();
+        app.poll_pr_delete_events();
+        app.poll_pr_thread_resolution_events();
         needs_redraw |= app.poll_editor_launches();
         needs_redraw |= app.poll_persisted_session_changes();
         needs_redraw |= app.poll_diff_watch_changes();
@@ -591,21 +593,7 @@ fn main() -> anyhow::Result<()> {
                     if pending_d {
                         pending_d = false;
                         if key.code == crossterm::event::KeyCode::Char('d') {
-                            if app.cursor_on_locked_comment() {
-                                let forge = app.forge_display_name();
-                                app.set_message(format!(
-                                    "Comment already pushed to {forge} — read only in tuicr"
-                                ));
-                            } else if !app.delete_comment_at_cursor() {
-                                if app.cursor_on_remote_thread() {
-                                    let forge = app.forge_display_name();
-                                    app.set_message(format!(
-                                        "{forge} comment — read only in tuicr"
-                                    ));
-                                } else {
-                                    app.set_message("No comment at cursor");
-                                }
-                            }
+                            app.delete_comment_at_cursor();
                             continue;
                         }
                         // Otherwise fall through to normal handling

@@ -222,6 +222,7 @@ Repository-managed agent integrations:
 
 - **Infinite scroll**: All files rendered into one `Vec<Line>`, then sliced by `scroll_offset`
 - **Inline comments**: Comments are rendered in `app_layout.rs` after file headers and after relevant diff lines
+- **GitHub thread resolution**: `x` on an annotated remote thread/comment row dispatches `resolveReviewThread` or `unresolveReviewThread` on a background worker. A PR-keyed completion updates `is_resolved` and rebuilds annotations; `:comments all` exposes resolved rows for reopening.
 - **Comment navigator**: Built from `line_annotations` in rendered order. Local review/file/line comments and visible remote threads appear as compact rows; selecting one calls `move_cursor_to_annotation()` so the diff viewport scrolls to the comment.
 - **Session loading**: `App::new()` calls manifest-backed persistence helpers to restore previous review
 - **Collaborative session writes**: session JSON saves use a storage lock plus temp-file rename, with stale sidecar lock recovery if a process crashes while holding the lock. The TUI keeps a persisted-session snapshot so polling, `:e`, and autosave can merge external `tuicr review add` comments without overwriting local edits.

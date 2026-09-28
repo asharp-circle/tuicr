@@ -257,6 +257,8 @@ impl GlabDiscussion {
                     created_at: note.created_at,
                     in_reply_to: None,
                     url: String::new(),
+                    review_id: None,
+                    review_database_id: None,
                 })
                 .collect::<Vec<_>>();
             if comments.is_empty() {
@@ -311,6 +313,8 @@ impl GlabDiscussion {
                 created_at: note.created_at,
                 in_reply_to: None,
                 url: String::new(),
+                review_id: None,
+                review_database_id: None,
             })
             .collect();
 

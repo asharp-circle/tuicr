@@ -1140,6 +1140,516 @@ fn should_detect_locked_comment_under_cursor_for_dd_path() {
 }
 
 #[test]
+fn should_delete_local_drafts_and_preserve_locked_comment() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    let mut agent = line_comment(LineSide::New, Some(11), None);
+    agent.author = "agent".into();
+    add_line_comment(&mut app, "src/lib.rs", 11, agent);
+    add_line_comment(
+        &mut app,
+        "src/lib.rs",
+        11,
+        line_comment(LineSide::New, Some(11), None),
+    );
+    app.rebuild_annotations();
+    let row = |app: &App, index| {
+        app.line_annotations
+            .iter()
+            .position(|a| {
+                matches!(a,
+        AnnotatedLine::LineComment { comment_idx, .. } if *comment_idx == index)
+            })
+            .unwrap()
+    };
+    app.diff_state.cursor_line = row(&app, 0);
+    assert!(app.delete_comment_at_cursor());
+    assert_eq!(
+        app.session.files[&PathBuf::from("src/lib.rs")].line_comments[&11].len(),
+        1
+    );
+    app.diff_state.cursor_line = row(&app, 0);
+    assert!(app.delete_comment_at_cursor());
+    assert!(
+        !app.session.files[&PathBuf::from("src/lib.rs")]
+            .line_comments
+            .contains_key(&11)
+    );
+}
+
+#[test]
+fn should_reject_locked_comment_without_confirmed_remote_identity() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.pr_viewer_login = Some("alice".into());
+    let mut comment = line_comment(LineSide::New, Some(11), None);
+    comment.lifecycle_state = CommentLifecycleState::PushedDraft;
+    comment.remote_comment_id = Some("PRRC_123".into());
+    add_line_comment(&mut app, "src/lib.rs", 11, comment);
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::LineComment { .. }))
+        .unwrap();
+    assert!(!app.delete_comment_at_cursor());
+    assert!(app.pr_delete_rx.is_none());
+    assert_eq!(
+        app.session.files[&PathBuf::from("src/lib.rs")].line_comments[&11].len(),
+        1
+    );
+}
+
+fn resolution_test_thread() -> crate::forge::remote_comments::RemoteReviewThread {
+    use crate::forge::remote_comments::{
+        RemoteCommentSide, RemoteReviewComment, RemoteReviewThread,
+    };
+    RemoteReviewThread {
+        id: "PRRT_1".into(),
+        path: "src/lib.rs".into(),
+        line: Some(11),
+        side: RemoteCommentSide::Right,
+        is_resolved: false,
+        is_outdated: false,
+        comments: ["root", "reply"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, body)| RemoteReviewComment {
+                id: format!("PRRC_{i}"),
+                author: Some("alice".into()),
+                body: body.into(),
+                created_at: None,
+                in_reply_to: None,
+                url: String::new(),
+                review_id: None,
+                review_database_id: None,
+            })
+            .collect(),
+    }
+}
+
+fn deliver_thread_resolution(
+    app: &mut App,
+    key: PrSessionKey,
+    resolved: bool,
+    result: std::result::Result<(), String>,
+) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.pr_thread_resolution_rx = Some(rx);
+    tx.send(PrThreadResolutionEvent {
+        key,
+        thread_id: "PRRT_1".into(),
+        resolved,
+        result,
+    })
+    .unwrap();
+    app.poll_pr_thread_resolution_events();
+}
+
+#[test]
+fn thread_resolution_updates_visibility_and_can_reopen_from_reply() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    let key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => panic!(),
+    };
+    app.rebuild_annotations();
+    assert!(
+        app.line_annotations
+            .iter()
+            .any(|a| matches!(a, AnnotatedLine::RemoteThreadLine { comment_idx: 1, .. }))
+    );
+    deliver_thread_resolution(&mut app, key.clone(), true, Ok(()));
+    assert!(app.forge_review_threads[0].is_resolved);
+    assert!(
+        !app.line_annotations
+            .iter()
+            .any(|a| matches!(a, AnnotatedLine::RemoteThreadLine { .. }))
+    );
+    app.set_remote_comments_visibility(crate::forge::remote_comments::PrCommentsVisibility::All);
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::RemoteThreadLine { comment_idx: 1, .. }))
+        .unwrap();
+    deliver_thread_resolution(&mut app, key, false, Ok(()));
+    assert!(!app.forge_review_threads[0].is_resolved);
+    assert!(
+        app.line_annotations
+            .iter()
+            .any(|a| matches!(a, AnnotatedLine::RemoteThreadLine { comment_idx: 1, .. }))
+    );
+}
+
+#[test]
+fn thread_resolution_failure_and_stale_result_leave_state_untouched() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    let key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => panic!(),
+    };
+    deliver_thread_resolution(&mut app, key.clone(), true, Err("forbidden".into()));
+    assert!(!app.forge_review_threads[0].is_resolved);
+    assert_eq!(
+        app.message.as_ref().unwrap().message_type,
+        MessageType::Error
+    );
+    deliver_thread_resolution(
+        &mut app,
+        PrSessionKey::new(key.repository, key.number + 1, key.head_sha),
+        true,
+        Ok(()),
+    );
+    assert!(!app.forge_review_threads[0].is_resolved);
+}
+
+#[test]
+fn thread_resolution_requires_a_remote_thread_row() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| {
+            matches!(
+                a,
+                AnnotatedLine::DiffLine {
+                    new_lineno: Some(11),
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    assert!(!app.toggle_remote_thread_resolution());
+    assert!(app.pr_thread_resolution_rx.is_none());
+
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::RemoteThreadLine { comment_idx: 1, .. }))
+        .unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.pr_delete_rx = Some(rx);
+    assert!(!app.toggle_remote_thread_resolution());
+    assert!(app.pr_thread_resolution_rx.is_none());
+    drop(tx);
+    app.pr_delete_rx = None;
+    app.forge_review_threads_loading = true;
+    assert!(!app.toggle_remote_thread_resolution());
+    app.forge_review_threads_loading = false;
+    app.diff_state.cursor_line = app.line_annotations.len();
+    assert!(!app.toggle_remote_thread_resolution());
+}
+
+#[test]
+fn thread_resolution_worker_disconnect_surfaces_error() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.pr_thread_resolution_rx = Some(rx);
+    drop(tx);
+    app.poll_pr_thread_resolution_events();
+    assert!(app.pr_thread_resolution_rx.is_none());
+    assert_eq!(
+        app.message.as_ref().unwrap().message_type,
+        MessageType::Error
+    );
+}
+
+#[test]
+fn should_confirm_owned_remote_comment_without_touching_a_code_line() {
+    use crate::forge::remote_comments::{
+        RemoteCommentSide, RemoteReviewComment, RemoteReviewThread,
+    };
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.pr_viewer_login = Some("alice".into());
+    app.forge_review_threads = vec![RemoteReviewThread {
+        id: "thread".into(),
+        path: "src/lib.rs".into(),
+        line: Some(11),
+        side: RemoteCommentSide::Right,
+        is_resolved: false,
+        is_outdated: false,
+        comments: vec![RemoteReviewComment {
+            id: "PRRC_1".into(),
+            author: Some("alice".into()),
+            body: "mine".into(),
+            created_at: None,
+            in_reply_to: None,
+            url: String::new(),
+            review_id: Some("PRR_1".into()),
+            review_database_id: Some("42".into()),
+        }],
+    }];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| {
+            matches!(
+                a,
+                AnnotatedLine::DiffLine {
+                    new_lineno: Some(11),
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    assert!(!app.delete_comment_at_cursor());
+    assert!(app.pending_confirm.is_none());
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::RemoteThreadLine { .. }))
+        .unwrap();
+    assert!(app.delete_comment_at_cursor());
+    assert_eq!(
+        app.pending_confirm,
+        Some(ConfirmAction::DeleteRemoteComment {
+            target: RemoteDeleteTarget::Comment("PRRC_1".into()),
+            local_id: None,
+        })
+    );
+    assert!(app.pr_delete_rx.is_none());
+}
+
+#[test]
+fn should_match_locked_file_comment_to_remote_review_id() {
+    use crate::forge::remote_comments::{
+        RemoteCommentSide, RemoteReviewComment, RemoteReviewThread,
+    };
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.pr_viewer_login = Some("alice".into());
+    app.forge_config.comment_type_prefix = false;
+    let mut comment = Comment::new("file body".into(), CommentType::None, None);
+    comment.lifecycle_state = CommentLifecycleState::PushedDraft;
+    comment.remote_review_id = Some("42".into());
+    let id = comment.id.clone();
+    app.session
+        .get_file_mut(&PathBuf::from("src/lib.rs"))
+        .unwrap()
+        .file_comments
+        .push(comment);
+    app.forge_review_threads = vec![RemoteReviewThread {
+        id: "thread".into(),
+        path: "src/lib.rs".into(),
+        line: Some(10),
+        side: RemoteCommentSide::Right,
+        is_resolved: false,
+        is_outdated: false,
+        comments: vec![RemoteReviewComment {
+            id: "PRRC_file".into(),
+            author: Some("alice".into()),
+            body: "file body".into(),
+            created_at: None,
+            in_reply_to: None,
+            url: String::new(),
+            review_id: Some("PRR_42".into()),
+            review_database_id: Some("42".into()),
+        }],
+    }];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::FileComment { .. }))
+        .unwrap();
+    assert!(app.delete_comment_at_cursor());
+    assert_eq!(
+        app.pending_confirm,
+        Some(ConfirmAction::DeleteRemoteComment {
+            target: RemoteDeleteTarget::Comment("PRRC_file".into()),
+            local_id: Some(id),
+        })
+    );
+}
+
+#[test]
+fn should_clear_only_pending_review_summary_with_confirmation() {
+    use crate::forge::remote_comments::{RemoteReviewState, RemoteReviewSummary};
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.pr_viewer_login = Some("alice".into());
+    app.forge_review_summaries = vec![RemoteReviewSummary {
+        id: "PRR_1".into(),
+        author: Some("alice".into()),
+        body: "summary".into(),
+        state: RemoteReviewState::Pending,
+        created_at: None,
+        url: String::new(),
+        database_id: Some("42".into()),
+    }];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::RemoteReviewSummaryLine { .. }))
+        .unwrap();
+    assert!(app.delete_comment_at_cursor());
+    assert_eq!(
+        app.pending_confirm,
+        Some(ConfirmAction::DeleteRemoteComment {
+            target: RemoteDeleteTarget::Review("PRR_1".into()),
+            local_id: None,
+        })
+    );
+    app.exit_confirm_mode();
+    app.forge_review_summaries[0].state = RemoteReviewState::Commented;
+    assert!(!app.delete_comment_at_cursor());
+    assert!(app.pending_confirm.is_none());
+}
+
+#[test]
+fn should_block_local_delete_while_submit_is_in_flight() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    add_line_comment(
+        &mut app,
+        "src/lib.rs",
+        11,
+        line_comment(LineSide::New, Some(11), None),
+    );
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::LineComment { .. }))
+        .unwrap();
+    let (_tx, rx) = std::sync::mpsc::channel();
+    app.pr_submit_rx = Some(rx);
+    assert!(!app.delete_comment_at_cursor());
+    assert_eq!(
+        app.session.files[&PathBuf::from("src/lib.rs")].line_comments[&11].len(),
+        1
+    );
+}
+
+#[test]
+fn should_reject_other_users_remote_comments() {
+    use crate::forge::remote_comments::{
+        RemoteCommentSide, RemoteReviewComment, RemoteReviewThread,
+    };
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.pr_viewer_login = Some("alice".into());
+    app.forge_review_threads = vec![RemoteReviewThread {
+        id: "thread".into(),
+        path: "src/lib.rs".into(),
+        line: Some(11),
+        side: RemoteCommentSide::Right,
+        is_resolved: false,
+        is_outdated: false,
+        comments: vec![RemoteReviewComment {
+            id: "comment".into(),
+            author: Some("bob".into()),
+            body: "hi".into(),
+            created_at: None,
+            in_reply_to: None,
+            url: String::new(),
+            review_id: None,
+            review_database_id: None,
+        }],
+    }];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::RemoteThreadLine { .. }))
+        .unwrap();
+    assert!(!app.delete_comment_at_cursor());
+    assert!(app.pr_delete_rx.is_none());
+    assert_eq!(app.forge_review_threads[0].comments.len(), 1);
+}
+
+#[test]
+fn should_remove_locked_comment_only_after_remote_delete_succeeds() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    let mut comment = line_comment(LineSide::New, Some(11), None);
+    comment.lifecycle_state = CommentLifecycleState::PushedDraft;
+    let id = comment.id.clone();
+    add_line_comment(&mut app, "src/lib.rs", 11, comment);
+    let key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => unreachable!(),
+    };
+    app.pr_viewer_login = Some("alice".into());
+    let send = |app: &mut App, result| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.pr_delete_rx = Some(rx);
+        tx.send(PrDeleteEvent::Done {
+            repository: key.repository.clone(),
+            pr_number: key.number,
+            head_sha: key.head_sha.clone(),
+            target: RemoteDeleteTarget::Comment("PRRC_123".into()),
+            local_id: Some(id.clone()),
+            expected_viewer: "alice".into(),
+            result,
+        })
+        .unwrap();
+        app.poll_pr_delete_events();
+    };
+    send(&mut app, Err("permission denied".into()));
+    assert_eq!(
+        app.session.files[&PathBuf::from("src/lib.rs")].line_comments[&11].len(),
+        1
+    );
+    send(&mut app, Ok(()));
+    assert!(
+        !app.session.files[&PathBuf::from("src/lib.rs")]
+            .line_comments
+            .contains_key(&11)
+    );
+}
+
+#[test]
+fn should_apply_successful_remote_delete_and_ignore_stale_pr_result() {
+    use crate::forge::remote_comments::{
+        RemoteCommentSide, RemoteReviewComment, RemoteReviewThread,
+    };
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![RemoteReviewThread {
+        id: "thread".into(),
+        path: "src/lib.rs".into(),
+        line: Some(11),
+        side: RemoteCommentSide::Right,
+        is_resolved: false,
+        is_outdated: false,
+        comments: vec![RemoteReviewComment {
+            id: "comment".into(),
+            author: Some("alice".into()),
+            body: "hi".into(),
+            created_at: None,
+            in_reply_to: None,
+            url: String::new(),
+            review_id: None,
+            review_database_id: None,
+        }],
+    }];
+    let key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => unreachable!(),
+    };
+    app.pr_viewer_login = Some("alice".into());
+    let send = |app: &mut App, head: String| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.pr_delete_rx = Some(rx);
+        tx.send(PrDeleteEvent::Done {
+            repository: key.repository.clone(),
+            pr_number: key.number,
+            head_sha: head,
+            target: RemoteDeleteTarget::Comment("comment".into()),
+            local_id: None,
+            expected_viewer: "alice".into(),
+            result: Ok(()),
+        })
+        .unwrap();
+        app.poll_pr_delete_events();
+    };
+    send(&mut app, "stale".into());
+    assert_eq!(app.forge_review_threads.len(), 1);
+    send(&mut app, key.head_sha);
+    assert!(app.forge_review_threads.is_empty());
+}
+
+#[test]
 fn should_yank_only_the_comment_under_the_cursor() {
     // given two line comments in the same file, `Y` on the second one
     // resolves to that comment's content and not the first.
@@ -1216,6 +1726,8 @@ fn should_yank_remote_comment_from_its_anchor_line_or_thread() {
                 created_at: None,
                 in_reply_to: None,
                 url: "https://example.com/comment-1".into(),
+                review_id: None,
+                review_database_id: None,
             },
             RemoteReviewComment {
                 id: "comment-2".into(),
@@ -1224,6 +1736,8 @@ fn should_yank_remote_comment_from_its_anchor_line_or_thread() {
                 created_at: None,
                 in_reply_to: Some("comment-1".into()),
                 url: "https://example.com/comment-2".into(),
+                review_id: None,
+                review_database_id: None,
             },
         ],
     }];
@@ -1289,6 +1803,8 @@ fn should_yank_rendered_remote_thread_when_hidden_thread_shares_its_anchor() {
         created_at: None,
         in_reply_to: None,
         url: format!("https://example.com/{id}"),
+        review_id: None,
+        review_database_id: None,
     };
     let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
     app.forge_review_threads = vec![
@@ -1355,6 +1871,8 @@ fn should_yank_reply_from_multiline_review_level_thread_footer() {
                 created_at: None,
                 in_reply_to: None,
                 url: "https://example.com/root".into(),
+                review_id: None,
+                review_database_id: None,
             },
             RemoteReviewComment {
                 id: "reply".into(),
@@ -1363,6 +1881,8 @@ fn should_yank_reply_from_multiline_review_level_thread_footer() {
                 created_at: None,
                 in_reply_to: Some("root".into()),
                 url: "https://example.com/reply".into(),
+                review_id: None,
+                review_database_id: None,
             },
         ],
     }];
@@ -1397,6 +1917,7 @@ fn should_yank_remote_review_summary() {
         state: RemoteReviewState::Approved,
         created_at: None,
         url: "https://example.com/review-1".into(),
+        database_id: None,
     }];
     app.rebuild_annotations();
 

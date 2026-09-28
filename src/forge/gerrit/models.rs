@@ -290,6 +290,8 @@ impl GerritComment {
             created_at: at(&self.updated),
             in_reply_to: self.in_reply_to,
             url,
+            review_id: None,
+            review_database_id: None,
         }
     }
 }

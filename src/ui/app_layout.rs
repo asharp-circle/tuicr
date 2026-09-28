@@ -80,7 +80,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Render confirm dialog if in confirm mode
     if app.input_mode == InputMode::Confirm {
-        comment_panel::render_confirm_dialog(frame, app, "Copy review to clipboard?");
+        let message = match app.pending_confirm {
+            Some(crate::app::ConfirmAction::DeleteRemoteComment { .. }) => {
+                "Permanently delete your GitHub comment?"
+            }
+            _ => "Copy review to clipboard?",
+        };
+        comment_panel::render_confirm_dialog(frame, app, message);
     }
 
     // Submit-flow modals.

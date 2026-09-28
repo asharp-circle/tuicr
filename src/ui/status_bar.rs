@@ -360,6 +360,14 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 InputMode::Normal if app.focused_panel == FocusedPanel::FileList => Cow::Borrowed(
                     "   j/k move \u{00b7} \u{21b5} open \u{00b7} i/e filter \u{00b7} I/E clear \u{00b7} / search \u{00b7} r reviewed",
                 ),
+                InputMode::Normal
+                    if app.focused_panel == FocusedPanel::Diff
+                        && app.forge_kind() == Some(crate::forge::traits::ForgeKind::GitHub) =>
+                {
+                    Cow::Borrowed(
+                        "   j/k scroll · {/} file · m/M comment · x resolve/reopen · r file · R hunk · c comment · ? help",
+                    )
+                }
                 InputMode::Normal => Cow::Borrowed(
                     "   j/k scroll \u{00b7} {/} file \u{00b7} m/M comment \u{00b7} r file \u{00b7} R hunk \u{00b7} c comment \u{00b7} ? help",
                 ),

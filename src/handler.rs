@@ -1228,6 +1228,13 @@ pub fn handle_comment_action(app: &mut App, action: Action) {
 pub fn handle_confirm_action(app: &mut App, action: Action) {
     match action {
         Action::ConfirmYes => {
+            if let Some(app::ConfirmAction::DeleteRemoteComment { target, local_id }) =
+                app.pending_confirm.clone()
+            {
+                app.exit_confirm_mode();
+                app.start_remote_comment_delete(target, local_id);
+                return;
+            }
             if let Some(app::ConfirmAction::CopyAndQuit) = app.pending_confirm {
                 let slug = app.session_slug();
                 if app.output_to_stdout {
@@ -1260,8 +1267,11 @@ pub fn handle_confirm_action(app: &mut App, action: Action) {
             app.should_quit = true;
         }
         Action::ConfirmNo => {
+            let quit = matches!(app.pending_confirm, Some(app::ConfirmAction::CopyAndQuit));
             app.exit_confirm_mode();
-            app.should_quit = true;
+            if quit {
+                app.should_quit = true;
+            }
         }
         Action::Quit => app.should_quit = true,
         _ => {}
@@ -1712,6 +1722,9 @@ fn handle_shared_normal_action(app: &mut App, action: Action) {
         Action::PrevComment => app.prev_comment(),
         Action::ToggleReviewed => app.toggle_reviewed(),
         Action::ToggleHunkReviewed => app.toggle_hunk_reviewed(),
+        Action::ToggleRemoteThreadResolution if app.focused_panel == FocusedPanel::Diff => {
+            app.toggle_remote_thread_resolution();
+        }
         Action::ToggleFocus => {
             let has_selector = app.has_inline_commit_selector();
             let has_comments = app.has_comment_navigator_items();

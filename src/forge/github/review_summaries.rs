@@ -60,6 +60,8 @@ struct GhReview {
     submitted_at: Option<DateTime<Utc>>,
     #[serde(default)]
     url: Option<String>,
+    #[serde(default)]
+    full_database_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +144,7 @@ pub(crate) fn parse_graphql_page(json: &str) -> Result<ParsedReviewsPage> {
                 .unwrap_or(RemoteReviewState::Commented),
             created_at: raw.submitted_at,
             url: raw.url.unwrap_or_default(),
+            database_id: raw.full_database_id,
         });
     }
     Ok(ParsedReviewsPage {
@@ -169,6 +172,7 @@ pub(crate) fn build_query(after_cursor: Option<&str>) -> String {
           author {{ login }}
           submittedAt
           url
+          fullDatabaseId
         }}
       }}
     }}

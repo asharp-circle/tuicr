@@ -570,6 +570,33 @@ pub trait ForgeBackend {
     /// and outdated state. Implementations should return all threads in
     /// posted order; filtering by visibility happens in the App.
     fn list_review_threads(&self, pr: &PullRequestDetails) -> Result<Vec<RemoteReviewThread>>;
+    /// Read the identity currently authenticated for forge mutations.
+    fn current_viewer(&self, _repo: &ForgeRepository) -> Result<Option<String>> {
+        Ok(None)
+    }
+    /// Set a review thread's resolved state by forge thread ID.
+    fn set_review_thread_resolved(
+        &self,
+        _repo: &ForgeRepository,
+        _id: &str,
+        _resolved: bool,
+    ) -> Result<()> {
+        Err(TuicrError::UnsupportedOperation(
+            "Resolving review threads is not supported by this forge".into(),
+        ))
+    }
+    /// Delete a viewer-owned remote inline comment by forge ID.
+    fn delete_review_comment(&self, _repo: &ForgeRepository, _id: &str) -> Result<()> {
+        Err(TuicrError::UnsupportedOperation(
+            "Deleting remote comments is not supported by this forge".into(),
+        ))
+    }
+    /// Clear a viewer-owned pending review summary body by forge ID.
+    fn delete_review(&self, _repo: &ForgeRepository, _id: &str) -> Result<()> {
+        Err(TuicrError::UnsupportedOperation(
+            "Deleting remote reviews is not supported by this forge".into(),
+        ))
+    }
     /// Fetch review-level summary comments — the body text on each
     /// `PullRequestReview`, distinct from line-anchored threads. Default
     /// returns an empty list; only forges with review-summary semantics

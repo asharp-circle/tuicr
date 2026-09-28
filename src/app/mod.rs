@@ -297,7 +297,7 @@ pub enum AnnotatedLine {
     ReviewCommentsHeader,
     /// A review-level comment line (part of a multi-line comment box)
     ReviewComment { comment_idx: usize },
-    /// A read-only line of a rendered remote review summary (PR review body).
+    /// A rendered remote review summary (PR review body).
     /// Renders at review scope, parallel to `ReviewComment` for local drafts.
     RemoteReviewSummaryLine { summary_idx: usize },
     /// File header line
@@ -343,9 +343,8 @@ pub enum AnnotatedLine {
         side: LineSide,
         comment_idx: usize,
     },
-    /// A read-only line of a rendered remote review thread. Cursor cannot
-    /// edit or reply to these in v1; the annotation is informational so
-    /// hit-testing and scroll math stay correct.
+    /// A rendered remote review thread line; `dd` may delete the viewer's comment.
+    /// Its annotation keeps hit-testing and scroll math aligned with rendering.
     RemoteThreadLine {
         thread_idx: usize,
         /// The root comment or reply whose rendered box row this is.
@@ -717,9 +716,13 @@ impl PullRequestDiffSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmAction {
     CopyAndQuit,
+    DeleteRemoteComment {
+        target: RemoteDeleteTarget,
+        local_id: Option<String>,
+    },
 }
 
 /// Push a `MappedComment` onto the appropriate bucket. Free function so the
@@ -1007,6 +1010,33 @@ pub enum PrThreadsEvent {
     },
 }
 
+#[derive(Debug)]
+pub(crate) struct PrThreadResolutionEvent {
+    pub key: crate::forge::traits::PrSessionKey,
+    pub thread_id: String,
+    pub resolved: bool,
+    pub result: std::result::Result<(), String>,
+}
+
+#[derive(Debug)]
+pub(crate) enum PrDeleteEvent {
+    Done {
+        repository: ForgeRepository,
+        pr_number: u64,
+        head_sha: String,
+        target: RemoteDeleteTarget,
+        local_id: Option<String>,
+        expected_viewer: String,
+        result: std::result::Result<(), String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteDeleteTarget {
+    Comment(String),
+    Review(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffViewMode {
     Unified,
@@ -1279,6 +1309,11 @@ pub struct App {
     /// Background-thread channel that delivers remote-thread fetch results.
     /// `Receiver` is only present while a fetch is in flight.
     pub pr_threads_rx: Option<std::sync::mpsc::Receiver<PrThreadsEvent>>,
+    /// Completion of an in-flight GitHub comment deletion.
+    pub(crate) pr_delete_rx: Option<std::sync::mpsc::Receiver<PrDeleteEvent>>,
+    pub(crate) pr_thread_resolution_rx: Option<std::sync::mpsc::Receiver<PrThreadResolutionEvent>>,
+    /// Forge-authenticated identity; never infer remote ownership from local config.
+    pub(crate) pr_viewer_login: Option<String>,
 
     /// `[forge]` section settings resolved at startup. Drives the body/footer
     /// formatting on submit. Defaults to `ForgeConfig::default()` when the
