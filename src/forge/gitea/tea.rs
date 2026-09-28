@@ -981,6 +981,7 @@ where
                 state: parse_review_state(&review.state),
                 created_at: review.submitted_at,
                 url: review.html_url,
+                database_id: None,
             })
             .collect())
     }
@@ -1302,6 +1303,8 @@ fn group_comments_into_threads(comments: Vec<GiteaPullReviewComment>) -> Vec<Rem
             created_at: comment.created_at,
             in_reply_to: None,
             url: comment.html_url,
+            review_id: None,
+            review_database_id: None,
         };
 
         let key = (

@@ -1657,6 +1657,8 @@ mod remote_comments_snapshot_tests {
                 created_at: None,
                 in_reply_to: None,
                 url: "https://example.com/x".to_string(),
+                review_id: None,
+                review_database_id: None,
             }],
         }
     }
@@ -2197,6 +2199,8 @@ mod remote_comments_snapshot_tests {
                 created_at: None,
                 in_reply_to: None,
                 url: String::new(),
+                review_id: None,
+                review_database_id: None,
             }],
         }];
         app.rebuild_annotations();
@@ -2230,6 +2234,8 @@ mod remote_comments_snapshot_tests {
                 created_at: None,
                 in_reply_to: None,
                 url: String::new(),
+                review_id: None,
+                review_database_id: None,
             }],
         }];
         app.set_remote_comments_visibility(PrCommentsVisibility::Hide);

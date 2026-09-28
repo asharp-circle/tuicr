@@ -348,6 +348,7 @@ impl App {
         // the user back on the selector, not into an empty diff behind it.
         self.input_mode = self
             .pending_confirm
+            .as_ref()
             .map_or(InputMode::Normal, ConfirmAction::return_mode);
         self.pending_confirm = None;
     }

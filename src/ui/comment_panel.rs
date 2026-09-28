@@ -1126,6 +1126,8 @@ mod tests {
                 created_at: None,
                 in_reply_to: None,
                 url: String::new(),
+                review_id: None,
+                review_database_id: None,
             }],
         };
 
@@ -1150,6 +1152,7 @@ mod tests {
             state: crate::forge::remote_comments::RemoteReviewState::Commented,
             created_at: None,
             url: String::new(),
+            database_id: None,
         };
 
         let lines =

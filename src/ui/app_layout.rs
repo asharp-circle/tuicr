@@ -35,7 +35,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let selector_background = app.input_mode == InputMode::CommitSelect
         || (app.input_mode == InputMode::Confirm
-            && app.pending_confirm.map(ConfirmAction::return_mode)
+            && app.pending_confirm.as_ref().map(ConfirmAction::return_mode)
                 == Some(InputMode::CommitSelect))
         || (app.input_mode == InputMode::Command
             && app.command_return_mode == InputMode::CommitSelect)
@@ -196,8 +196,8 @@ fn render_content_view(frame: &mut Frame, app: &mut App, area: Rect) {
 /// The prompt to draw, if keys are currently routed to it. Gating on the mode
 /// as well as `pending_confirm` keeps a prompt that outlived its mode (e.g. a
 /// PR open landing mid-prompt) from being drawn where Y/N cannot reach it.
-fn active_confirm(app: &App) -> Option<ConfirmAction> {
+fn active_confirm(app: &App) -> Option<&ConfirmAction> {
     (app.input_mode == InputMode::Confirm)
-        .then_some(app.pending_confirm)
+        .then_some(app.pending_confirm.as_ref())
         .flatten()
 }

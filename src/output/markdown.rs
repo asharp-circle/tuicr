@@ -1774,6 +1774,8 @@ mod tests {
                 created_at: None,
                 in_reply_to: None,
                 url: format!("https://github.com/agavra/tuicr/pull/125#discussion_{id}"),
+                review_id: None,
+                review_database_id: None,
             }],
         }
     }

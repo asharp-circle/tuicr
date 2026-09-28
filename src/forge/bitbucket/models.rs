@@ -405,6 +405,8 @@ impl BbComment {
             created_at: self.created_on,
             in_reply_to: self.parent.map(|parent| parent.id.to_string()),
             url: self.links.html_href(),
+            review_id: None,
+            review_database_id: None,
         }
     }
 
@@ -504,6 +506,7 @@ pub fn review_summaries(comments: &[BbComment]) -> Vec<RemoteReviewSummary> {
             state: RemoteReviewState::Commented,
             created_at: comment.created_on,
             url: comment.links.html_href(),
+            database_id: None,
         })
         .collect()
 }

@@ -31,6 +31,10 @@ impl App {
             self.set_warning(":submit only applies in PR mode");
             return;
         };
+        if self.pr_delete_rx.is_some() {
+            self.set_warning("Wait for comment deletion before submitting a review");
+            return;
+        }
         if pr.is_read_only() {
             let reason = pr.read_only_reason().unwrap_or("read only");
             self.set_warning(format!("Cannot submit: PR is {reason}"));
@@ -285,6 +289,11 @@ impl App {
                 "Not in PR mode".to_string(),
             ));
         };
+        if self.pr_delete_rx.is_some() {
+            return Err(TuicrError::Forge(
+                "Wait for comment deletion before submitting".into(),
+            ));
+        }
         if self.pr_submit_state.is_some() {
             return Ok(()); // already in flight; ignore
         }
