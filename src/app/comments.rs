@@ -680,7 +680,8 @@ impl App {
         let Some(thread) = self.forge_review_threads.get(*thread_idx) else {
             return false;
         };
-        if self.pr_thread_resolution_rx.is_some()
+        if self.pr_reaction_rx.is_some()
+            || self.pr_thread_resolution_rx.is_some()
             || self.pr_delete_rx.is_some()
             || self.pr_threads_rx.is_some()
             || self.forge_review_threads_loading
@@ -1077,6 +1078,7 @@ impl App {
         if self.pr_submit_rx.is_some()
             || self.pr_delete_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
+            || self.pr_reaction_rx.is_some()
         {
             self.set_warning("Wait for the current GitHub operation to finish");
             return false;

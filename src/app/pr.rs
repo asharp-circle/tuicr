@@ -45,6 +45,12 @@ impl App {
         self.forge_review_summaries = Vec::new();
         self.forge_review_threads_loading = false;
         self.pr_threads_rx = None;
+        self.reaction_target = None;
+        if self.pr_reaction_rx.take().is_some() {
+            self.set_warning(
+                "PR changed while updating a reaction; refresh to verify the GitHub result",
+            );
+        }
         if self.pr_thread_resolution_rx.take().is_some() {
             self.set_warning(
                 "PR changed while updating a thread; refresh to verify the GitHub result",
@@ -1071,7 +1077,7 @@ impl App {
         details: &crate::forge::traits::PullRequestDetails,
         local_checkout: Option<std::path::PathBuf>,
     ) {
-        if self.pr_thread_resolution_rx.is_some() {
+        if self.pr_thread_resolution_rx.is_some() || self.pr_reaction_rx.is_some() {
             return;
         }
         // Keep the last known rows visible until the new snapshot arrives.
@@ -1150,7 +1156,10 @@ impl App {
                 if !still_relevant {
                     return;
                 }
-                if self.pr_delete_rx.is_some() || self.pr_thread_resolution_rx.is_some() {
+                if self.pr_delete_rx.is_some()
+                    || self.pr_thread_resolution_rx.is_some()
+                    || self.pr_reaction_rx.is_some()
+                {
                     return;
                 }
                 let mut had_error = false;

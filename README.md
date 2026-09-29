@@ -315,6 +315,7 @@ A first-session cheatsheet. Press `?` inside tuicr for the full reference.
 | `c` / `C` | Add line / file comment |
 | `dd` | Delete a local draft or your GitHub inline comment; clear a pending review summary (submitted summaries and other forges' remote comments cannot be deleted) |
 | `x` | Resolve/reopen a GitHub review thread at the cursor (`:comments all` shows resolved threads for reopening) |
+| `+` | Open the GitHub reaction picker on a displayed review thread comment or reply at the cursor. `j`/`k` select, Enter toggles your reaction, Esc cancels. Counts and your reactions (`*`) appear inline. |
 | `v` / `V` | Visual mode (range comment) |
 | `r` | Toggle file reviewed |
 | `R` | Toggle hunk reviewed |

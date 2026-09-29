@@ -2619,6 +2619,7 @@ fn sample_thread(line: u32, body: &str, resolved: bool, outdated: bool) -> Remot
             url: "https://example.com/c".to_string(),
             review_id: None,
             review_database_id: None,
+            reactions: Vec::new(),
         }],
     }
 }

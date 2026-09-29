@@ -26,6 +26,31 @@ impl RemoteCommentSide {
     }
 }
 
+pub const GITHUB_REACTIONS: [(&str, &str); 8] = [
+    ("THUMBS_UP", "👍"),
+    ("THUMBS_DOWN", "👎"),
+    ("LAUGH", "😄"),
+    ("HOORAY", "🎉"),
+    ("CONFUSED", "😕"),
+    ("HEART", "❤️"),
+    ("ROCKET", "🚀"),
+    ("EYES", "👀"),
+];
+
+pub fn github_reaction_emoji(content: &str) -> Option<&'static str> {
+    GITHUB_REACTIONS
+        .iter()
+        .find(|(name, _)| *name == content)
+        .map(|(_, emoji)| *emoji)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteReaction {
+    pub content: String,
+    pub count: usize,
+    pub viewer_has_reacted: bool,
+}
+
 /// A single remote review comment, fetched from a forge.
 ///
 /// Anchor fields (`path`, `line`, `side`) live on the parent
@@ -48,6 +73,8 @@ pub struct RemoteReviewComment {
     pub review_id: Option<String>,
     #[serde(default)]
     pub review_database_id: Option<String>,
+    #[serde(default)]
+    pub reactions: Vec<RemoteReaction>,
 }
 
 /// State of a remote review at submit time. GitHub exposes one of
@@ -213,13 +240,14 @@ pub fn filter_threads(
 /// - 1 header line for the root comment (`╭─ [github @author] L42 ──`)
 /// - 1 separator line per reply (`├─ ↳ @author ──`)
 /// - 1 body line per `\n`-split line in each comment's body
+/// - 1 reaction line per comment with reactions
 /// - 1 footer line at the end of the thread (`╰────`)
 pub fn thread_display_comment_indices(thread: &RemoteReviewThread) -> Vec<usize> {
     let mut indices = Vec::new();
     for (comment_idx, comment) in thread.comments.iter().enumerate() {
         indices.extend(std::iter::repeat_n(
             comment_idx,
-            1 + comment.body.split('\n').count(),
+            1 + comment.body.split('\n').count() + usize::from(!comment.reactions.is_empty()),
         ));
     }
     indices.push(thread.comments.len().saturating_sub(1));
@@ -299,6 +327,7 @@ mod tests {
                 url: format!("https://example.com/{id}"),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             }],
         }
     }

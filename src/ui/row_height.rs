@@ -643,6 +643,7 @@ mod tests {
                 url: "https://example.com/comment".to_string(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             }],
         }];
         // `sort_files_by_directory` reorders diff_files by parent directory,

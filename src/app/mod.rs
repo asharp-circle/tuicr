@@ -616,6 +616,7 @@ pub enum InputMode {
     /// a live preview immediately; `/` opens a filter draft the same way the
     /// file tree's `i`/`e`/`/` prompts work.
     ThemePicker,
+    ReactionPicker,
 }
 
 /// CommandCompletionState keeps one Tab-completion run anchored to the text
@@ -1312,6 +1313,9 @@ pub struct App {
     /// Completion of an in-flight GitHub comment deletion.
     pub(crate) pr_delete_rx: Option<std::sync::mpsc::Receiver<PrDeleteEvent>>,
     pub(crate) pr_thread_resolution_rx: Option<std::sync::mpsc::Receiver<PrThreadResolutionEvent>>,
+    pub(crate) pr_reaction_rx: Option<std::sync::mpsc::Receiver<reactions::PrReactionEvent>>,
+    pub reaction_target: Option<(crate::forge::traits::PrSessionKey, String)>,
+    pub reaction_cursor: usize,
     /// Forge-authenticated identity; never infer remote ownership from local config.
     pub(crate) pr_viewer_login: Option<String>,
 
@@ -1907,6 +1911,7 @@ mod init;
 mod modes;
 mod navigation;
 mod pr;
+pub(crate) mod reactions;
 mod reviewed;
 mod search;
 mod session;

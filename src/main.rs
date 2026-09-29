@@ -17,9 +17,9 @@ use tuicr::handler::{
     handle_command_action, handle_comment_action, handle_comment_navigator_action,
     handle_commit_select_action, handle_commit_selector_action, handle_confirm_action,
     handle_diff_action, handle_file_list_action, handle_help_action, handle_mouse_event,
-    handle_search_action, handle_submit_action_picker_action, handle_submit_confirm_action,
-    handle_submit_resolver_action, handle_summary_action, handle_theme_picker_action,
-    handle_visual_action,
+    handle_reaction_picker_action, handle_search_action, handle_submit_action_picker_action,
+    handle_submit_confirm_action, handle_submit_resolver_action, handle_summary_action,
+    handle_theme_picker_action, handle_visual_action,
 };
 use tuicr::input::{
     Action, map_file_tree_mode_with_q_quits, map_file_tree_prompt_mode,
@@ -454,6 +454,7 @@ fn main() -> anyhow::Result<()> {
         app.poll_pr_submit_events();
         app.poll_pr_delete_events();
         app.poll_pr_thread_resolution_events();
+        app.poll_pr_reaction_events();
         needs_redraw |= app.poll_editor_launches();
         needs_redraw |= app.poll_persisted_session_changes();
         needs_redraw |= app.poll_diff_watch_changes();
@@ -889,6 +890,7 @@ fn dispatch_action(app: &mut App, action: Action) {
         InputMode::SubmitConfirm => handle_submit_confirm_action(app, action),
         InputMode::SubmitActionPicker => handle_submit_action_picker_action(app, action),
         InputMode::ThemePicker => handle_theme_picker_action(app, action),
+        InputMode::ReactionPicker => handle_reaction_picker_action(app, action),
         InputMode::Normal => match app.focused_panel {
             FocusedPanel::FileList => handle_file_list_action(app, action),
             FocusedPanel::Comments => handle_comment_navigator_action(app, action),

@@ -342,6 +342,7 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             InputMode::SubmitConfirm => " SUBMIT ".to_string(),
             InputMode::SubmitActionPicker => " SUBMIT ".to_string(),
             InputMode::ThemePicker => " THEME ".to_string(),
+            InputMode::ReactionPicker => " REACT ".to_string(),
         };
 
         let mode_span = Span::styled(mode_str, styles::mode_style(theme));
@@ -365,7 +366,7 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                         && app.forge_kind() == Some(crate::forge::traits::ForgeKind::GitHub) =>
                 {
                     Cow::Borrowed(
-                        "   j/k scroll · {/} file · m/M comment · x resolve/reopen · r file · R hunk · c comment · ? help",
+                        "   j/k scroll · {/} file · m/M comment · x resolve/reopen · + react · r file · R hunk · c comment · ? help",
                     )
                 }
                 InputMode::Normal => Cow::Borrowed(
@@ -397,6 +398,7 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 InputMode::SubmitActionPicker => {
                     Cow::Borrowed("   j/k move \u{00b7} \u{21b5} submit \u{00b7} esc cancel")
                 }
+                InputMode::ReactionPicker => Cow::Borrowed("   j/k select · ↵ toggle · esc cancel"),
                 InputMode::ThemePicker => Cow::Borrowed(
                     "   j/k move \u{00b7} \u{21b5} apply \u{00b7} / filter \u{00b7} esc cancel",
                 ),

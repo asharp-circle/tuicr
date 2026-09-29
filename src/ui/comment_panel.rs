@@ -364,6 +364,29 @@ pub fn format_remote_thread_lines(
             ]));
         }
 
+        if !comment.reactions.is_empty() {
+            let labels = comment
+                .reactions
+                .iter()
+                .filter_map(|reaction| {
+                    crate::forge::remote_comments::github_reaction_emoji(&reaction.content).map(
+                        |emoji| {
+                            format!(
+                                "{emoji} {}{}",
+                                reaction.count,
+                                if reaction.viewer_has_reacted { "*" } else { "" }
+                            )
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("  ");
+            result.push(Line::from(vec![
+                Span::styled("    │  ".to_string(), border_style),
+                Span::styled(labels, badge_style),
+            ]));
+        }
+
         is_first = false;
         let _ = iter.peek();
     }
@@ -1074,6 +1097,7 @@ mod tests {
                 url: String::new(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             }],
         };
 
@@ -1087,6 +1111,52 @@ mod tests {
 
         assert!(header.contains("[gitlab @alice]"));
         assert!(!header.contains("[github @alice]"));
+    }
+
+    #[test]
+    fn reaction_row_matches_annotation_count_and_marks_own_reaction() {
+        use crate::forge::remote_comments::{
+            RemoteCommentSide, RemoteReaction, RemoteReviewComment, RemoteReviewThread,
+        };
+        let thread = RemoteReviewThread {
+            id: "thread".into(),
+            path: "src/lib.rs".into(),
+            line: Some(1),
+            side: RemoteCommentSide::Right,
+            is_resolved: false,
+            is_outdated: false,
+            comments: vec![RemoteReviewComment {
+                id: "comment".into(),
+                author: Some("alice".into()),
+                body: "body".into(),
+                created_at: None,
+                in_reply_to: None,
+                url: String::new(),
+                review_id: None,
+                review_database_id: None,
+                reactions: vec![RemoteReaction {
+                    content: "HEART".into(),
+                    count: 2,
+                    viewer_has_reacted: true,
+                }],
+            }],
+        };
+        let lines =
+            format_remote_thread_lines(&test_theme(), &thread, false, Some(ForgeKind::GitHub));
+        assert_eq!(
+            lines.len(),
+            crate::forge::remote_comments::thread_display_lines(&thread)
+        );
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert!(rendered.iter().any(|line| line.contains("❤️ 2*")));
     }
 
     #[test]

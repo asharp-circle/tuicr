@@ -1305,6 +1305,7 @@ fn group_comments_into_threads(comments: Vec<GiteaPullReviewComment>) -> Vec<Rem
             url: comment.html_url,
             review_id: None,
             review_database_id: None,
+            reactions: Vec::new(),
         };
 
         let key = (

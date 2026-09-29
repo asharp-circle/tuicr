@@ -585,6 +585,17 @@ pub trait ForgeBackend {
             "Resolving review threads is not supported by this forge".into(),
         ))
     }
+    fn toggle_comment_reaction(
+        &self,
+        _repo: &ForgeRepository,
+        _comment_id: &str,
+        _content: &str,
+        _remove: bool,
+    ) -> Result<()> {
+        Err(TuicrError::UnsupportedOperation(
+            "Reactions require GitHub".into(),
+        ))
+    }
     /// Delete a viewer-owned remote inline comment by forge ID.
     fn delete_review_comment(&self, _repo: &ForgeRepository, _id: &str) -> Result<()> {
         Err(TuicrError::UnsupportedOperation(

@@ -561,6 +561,13 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
         ]),
         Line::from(vec![
             Span::styled(
+                "  +         ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("React to GitHub comment at cursor"),
+        ]),
+        Line::from(vec![
+            Span::styled(
                 "  y         ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),

@@ -39,6 +39,7 @@ pub enum Action {
     ToggleReviewed,
     ToggleHunkReviewed,
     ToggleRemoteThreadResolution,
+    OpenReactionPicker,
     AddLineComment,
     AddFileComment,
     EditComment,
@@ -191,6 +192,7 @@ pub fn map_key_to_action_with_q_quits(
         InputMode::SubmitConfirm => map_submit_confirm_mode(key),
         InputMode::SubmitActionPicker => map_submit_action_picker_mode_with_q_quits(key, q_quits),
         InputMode::ThemePicker => map_theme_picker_mode(key),
+        InputMode::ReactionPicker => map_reaction_picker_mode(key),
     }
 }
 
@@ -253,6 +255,9 @@ fn map_normal_mode_with_q_quits(key: KeyEvent, leader_key: char, q_quits: bool) 
         (KeyCode::Char('r'), KeyModifiers::NONE) => Action::ToggleReviewed,
         (KeyCode::Char('R'), _) => Action::ToggleHunkReviewed,
         (KeyCode::Char('x'), KeyModifiers::NONE) => Action::ToggleRemoteThreadResolution,
+        (KeyCode::Char('+'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+            Action::OpenReactionPicker
+        }
         (KeyCode::Char('c'), KeyModifiers::NONE) => Action::AddLineComment,
         (KeyCode::Char('C'), _) => Action::AddFileComment,
         (KeyCode::Char('i'), KeyModifiers::NONE) => Action::EditComment,
@@ -574,6 +579,16 @@ pub fn map_target_filter_mode(key: KeyEvent) -> Action {
     }
 }
 
+fn map_reaction_picker_mode(key: KeyEvent) -> Action {
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc, _) => Action::ExitMode,
+        (KeyCode::Enter, _) => Action::SubmitInput,
+        (KeyCode::Char('j') | KeyCode::Down, _) => Action::CursorDown(1),
+        (KeyCode::Char('k') | KeyCode::Up, _) => Action::CursorUp(1),
+        _ => Action::None,
+    }
+}
+
 /// Navigation key map for `InputMode::ThemePicker` while no `/` filter draft
 /// is open. `main.rs` routes to `map_theme_picker_filter_mode` instead when
 /// `App::theme_picker_filtering()` is true.
@@ -886,6 +901,48 @@ mod tests {
     fn should_map_uppercase_r_to_toggle_hunk_reviewed_in_normal_mode() {
         let action = map_normal_mode(key_shift('R'), DEFAULT_LEADER_KEY);
         assert_eq!(action, Action::ToggleHunkReviewed);
+    }
+
+    #[test]
+    fn maps_reaction_picker_keys() {
+        assert_eq!(
+            map_normal_mode(key(KeyCode::Char('+')), DEFAULT_LEADER_KEY),
+            Action::OpenReactionPicker
+        );
+        assert_eq!(
+            map_normal_mode(key_shift('+'), DEFAULT_LEADER_KEY),
+            Action::OpenReactionPicker
+        );
+        assert_ne!(
+            map_normal_mode(
+                KeyEvent::new(KeyCode::Char('+'), KeyModifiers::CONTROL),
+                DEFAULT_LEADER_KEY
+            ),
+            Action::OpenReactionPicker
+        );
+        assert_ne!(
+            map_normal_mode(
+                KeyEvent::new(KeyCode::Char('+'), KeyModifiers::ALT),
+                DEFAULT_LEADER_KEY
+            ),
+            Action::OpenReactionPicker
+        );
+        assert_eq!(
+            map_key_to_action(
+                key(KeyCode::Enter),
+                InputMode::ReactionPicker,
+                DEFAULT_LEADER_KEY
+            ),
+            Action::SubmitInput
+        );
+        assert_eq!(
+            map_key_to_action(
+                key(KeyCode::Esc),
+                InputMode::ReactionPicker,
+                DEFAULT_LEADER_KEY
+            ),
+            Action::ExitMode
+        );
     }
 
     #[test]

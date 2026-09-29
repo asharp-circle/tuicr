@@ -102,6 +102,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.input_mode == InputMode::ThemePicker {
         theme_picker::render_theme_picker(frame, app);
     }
+    if app.input_mode == InputMode::ReactionPicker {
+        crate::ui::reactions::render_reaction_picker(frame, app);
+    }
 
     // Position terminal cursor for IME when in Comment mode
     // Always set a cursor position to prevent IME from showing at (0,0)

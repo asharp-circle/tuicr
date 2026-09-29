@@ -1630,6 +1630,26 @@ fn edit_comment_at_cursor(app: &mut App, cursor_at_end: bool) {
     }
 }
 
+pub fn handle_reaction_picker_action(app: &mut App, action: Action) {
+    match action {
+        Action::CursorDown(_) => {
+            app.reaction_cursor =
+                (app.reaction_cursor + 1) % crate::forge::remote_comments::GITHUB_REACTIONS.len()
+        }
+        Action::CursorUp(_) => {
+            app.reaction_cursor =
+                (app.reaction_cursor + crate::forge::remote_comments::GITHUB_REACTIONS.len() - 1)
+                    % crate::forge::remote_comments::GITHUB_REACTIONS.len()
+        }
+        Action::SubmitInput => app.select_reaction(),
+        Action::ExitMode => {
+            app.reaction_target = None;
+            app.input_mode = InputMode::Normal;
+        }
+        _ => {}
+    }
+}
+
 /// Handle actions when diff panel is focused
 pub fn handle_diff_action(app: &mut App, action: Action) {
     match action {
@@ -1722,6 +1742,9 @@ fn handle_shared_normal_action(app: &mut App, action: Action) {
         Action::PrevComment => app.prev_comment(),
         Action::ToggleReviewed => app.toggle_reviewed(),
         Action::ToggleHunkReviewed => app.toggle_hunk_reviewed(),
+        Action::OpenReactionPicker if app.focused_panel == FocusedPanel::Diff => {
+            app.open_reaction_picker()
+        }
         Action::ToggleRemoteThreadResolution if app.focused_panel == FocusedPanel::Diff => {
             app.toggle_remote_thread_resolution();
         }

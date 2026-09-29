@@ -219,6 +219,7 @@ impl App {
             || self.pr_submit_rx.is_some()
             || self.pr_delete_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
+            || self.pr_reaction_rx.is_some()
     }
 
     pub fn reload_persisted_session_if_changed(&mut self, force: bool) -> Result<usize> {

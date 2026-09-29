@@ -428,6 +428,56 @@ where
             .map(str::to_string))
     }
 
+    fn toggle_comment_reaction(
+        &self,
+        repo: &ForgeRepository,
+        comment_id: &str,
+        content: &str,
+        remove: bool,
+    ) -> Result<()> {
+        let (field, query) = if remove {
+            (
+                "removeReaction",
+                "mutation($id: ID!, $content: ReactionContent!) { removeReaction(input: {subjectId: $id, content: $content}) { subject { id } } }",
+            )
+        } else {
+            (
+                "addReaction",
+                "mutation($id: ID!, $content: ReactionContent!) { addReaction(input: {subjectId: $id, content: $content}) { subject { id } } }",
+            )
+        };
+        let mut args = vec![
+            "api".into(),
+            "graphql".into(),
+            "-f".into(),
+            format!("query={query}"),
+            "-f".into(),
+            format!("id={comment_id}"),
+            "-f".into(),
+            format!("content={content}"),
+        ];
+        if repo.host != DEFAULT_GITHUB_HOST {
+            args.extend(["--hostname".into(), repo.host.clone()]);
+        }
+        let output = self.run_gh(args, &repo.host)?;
+        let response: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(errors) = response.get("errors") {
+            return Err(TuicrError::Forge(format!(
+                "GitHub reaction failed: {errors}"
+            )));
+        }
+        if response
+            .pointer(&format!("/data/{field}/subject/id"))
+            .and_then(|v| v.as_str())
+            != Some(comment_id)
+        {
+            return Err(TuicrError::Forge(
+                "GitHub did not confirm reaction update".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn set_review_thread_resolved(
         &self,
         repo: &ForgeRepository,
@@ -1449,6 +1499,70 @@ index 1111111..2222222 100644
             args.windows(2)
                 .any(|pair| pair == ["--hostname", "github.example.com"])
         }));
+    }
+
+    #[test]
+    fn toggles_reaction_with_graphql_and_validates_subject() {
+        struct ReactionRunner(std::cell::RefCell<Vec<Vec<String>>>);
+        impl GhCommandRunner for ReactionRunner {
+            fn run(&self, args: &[String]) -> GhCommandResult<String> {
+                self.0.borrow_mut().push(args.to_vec());
+                let field = if args.iter().any(|arg| arg.contains("removeReaction(input")) {
+                    "removeReaction"
+                } else {
+                    "addReaction"
+                };
+                Ok(
+                    serde_json::json!({ "data": { field: { "subject": { "id": "PRRC_1" } } } })
+                        .to_string(),
+                )
+            }
+        }
+        let backend = GitHubGhBackend::with_runner(None, ReactionRunner(Default::default()));
+        let repo = ForgeRepository::github("github.example.com", "owner", "repo");
+        backend
+            .toggle_comment_reaction(&repo, "PRRC_1", "HEART", false)
+            .unwrap();
+        backend
+            .toggle_comment_reaction(&repo, "PRRC_1", "HEART", true)
+            .unwrap();
+        let calls = backend.runner.0.borrow();
+        assert_eq!(calls.len(), 2);
+        for call in calls.iter() {
+            assert!(call.contains(&"id=PRRC_1".to_string()));
+            assert!(call.contains(&"content=HEART".to_string()));
+            assert!(
+                call.windows(2)
+                    .any(|pair| pair == ["--hostname", "github.example.com"])
+            );
+        }
+        struct ErrorRunner;
+        impl GhCommandRunner for ErrorRunner {
+            fn run(&self, _: &[String]) -> GhCommandResult<String> {
+                Ok(r#"{"data":{"addReaction":{"subject":{"id":"wrong"}}}}"#.into())
+            }
+        }
+        assert!(
+            GitHubGhBackend::with_runner(None, ErrorRunner)
+                .toggle_comment_reaction(&repo, "PRRC_1", "HEART", false)
+                .is_err()
+        );
+        struct GraphQlErrorsRunner;
+        impl GhCommandRunner for GraphQlErrorsRunner {
+            fn run(&self, _: &[String]) -> GhCommandResult<String> {
+                Ok(
+                    r#"{"errors":[{"message":"Could not resolve to a node with the global id"}]}"#
+                        .into(),
+                )
+            }
+        }
+        let err = GitHubGhBackend::with_runner(None, GraphQlErrorsRunner)
+            .toggle_comment_reaction(&repo, "PRRC_1", "HEART", false)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Could not resolve to a node with the global id")
+        );
     }
 
     #[test]

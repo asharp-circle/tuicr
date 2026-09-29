@@ -2318,6 +2318,7 @@ mod remote_comments_side_by_side_snapshot_tests {
                 url: "https://example.com".to_string(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             }],
         }
     }

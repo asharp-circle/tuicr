@@ -316,6 +316,7 @@ impl AzThread {
                 url: String::new(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             })
             .collect();
         if comments.is_empty() {

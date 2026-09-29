@@ -139,6 +139,7 @@ Shown below the file tree when local comments or visible remote PR threads exist
 | `v` / `V` | Enter visual mode for range comments |
 | `dd` | Delete a local draft or your GitHub inline comment at cursor; clear a pending review summary (submitted summaries and other forges' remote comments are unsupported) |
 | `x` | Resolve or reopen the GitHub review thread under the diff cursor (on its displayed comment or reply); use `:comments all` to show resolved threads for reopening |
+| `+` | Open the GitHub reaction picker on a displayed review thread comment or reply under the diff cursor. `j`/`k` select, Enter toggles your reaction, Esc cancels. Counts and your reactions (`*`) appear inline. |
 | `i` | Edit comment at cursor (vim: text cursor at start) |
 | `A` | Edit comment at cursor with text cursor at end (vim mode only) |
 | `e` | Open focused file in `$EDITOR` |
