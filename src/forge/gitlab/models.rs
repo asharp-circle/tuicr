@@ -259,6 +259,7 @@ impl GlabDiscussion {
                     url: String::new(),
                     review_id: None,
                     review_database_id: None,
+                    reactions: Vec::new(),
                 })
                 .collect::<Vec<_>>();
             if comments.is_empty() {
@@ -315,6 +316,7 @@ impl GlabDiscussion {
                 url: String::new(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             })
             .collect();
 

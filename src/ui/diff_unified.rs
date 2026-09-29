@@ -1659,6 +1659,7 @@ mod remote_comments_snapshot_tests {
                 url: "https://example.com/x".to_string(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             }],
         }
     }
@@ -2201,6 +2202,7 @@ mod remote_comments_snapshot_tests {
                 url: String::new(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             }],
         }];
         app.rebuild_annotations();
@@ -2236,6 +2238,7 @@ mod remote_comments_snapshot_tests {
                 url: String::new(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             }],
         }];
         app.set_remote_comments_visibility(PrCommentsVisibility::Hide);

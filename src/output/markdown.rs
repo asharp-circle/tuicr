@@ -1776,6 +1776,7 @@ mod tests {
                 url: format!("https://github.com/agavra/tuicr/pull/125#discussion_{id}"),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             }],
         }
     }

@@ -54,7 +54,9 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::error::{Result, TuicrError};
-use crate::forge::remote_comments::{RemoteCommentSide, RemoteReviewComment, RemoteReviewThread};
+use crate::forge::remote_comments::{
+    RemoteCommentSide, RemoteReaction, RemoteReviewComment, RemoteReviewThread,
+};
 
 #[derive(Debug, Deserialize)]
 struct GhAuthor {
@@ -78,6 +80,24 @@ struct GhReviewComment {
     url: Option<String>,
     #[serde(default)]
     reply_to: Option<GhReplyRef>,
+    #[serde(default)]
+    reaction_groups: Vec<GhReactionGroup>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhReactionGroup {
+    content: String,
+    #[serde(default)]
+    viewer_has_reacted: bool,
+    reactors: GhReactors,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhReactors {
+    #[serde(default)]
+    total_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -231,6 +251,21 @@ fn convert_thread(raw: GhReviewThread) -> RemoteReviewThread {
 }
 
 fn convert_comment(raw: GhReviewComment) -> RemoteReviewComment {
+    let reactions = raw
+        .reaction_groups
+        .iter()
+        .filter(|group| {
+            group.reactors.total_count > 0
+                && crate::forge::remote_comments::GITHUB_REACTIONS
+                    .iter()
+                    .any(|(content, _)| *content == group.content)
+        })
+        .map(|group| RemoteReaction {
+            content: group.content.clone(),
+            count: group.reactors.total_count,
+            viewer_has_reacted: group.viewer_has_reacted,
+        })
+        .collect();
     RemoteReviewComment {
         id: raw.id,
         author: raw.author.and_then(|a| a.login),
@@ -245,6 +280,7 @@ fn convert_comment(raw: GhReviewComment) -> RemoteReviewComment {
         review_database_id: raw
             .pull_request_review
             .and_then(|review| review.full_database_id),
+        reactions,
     }
 }
 
@@ -277,6 +313,7 @@ pub(crate) fn build_query(after_cursor: Option<&str>) -> String {
               url
               replyTo {{ id }}
               pullRequestReview {{ id fullDatabaseId }}
+              reactionGroups {{ content viewerHasReacted reactors {{ totalCount }} }}
             }}
           }}
         }}
@@ -522,6 +559,33 @@ mod tests {
         assert_eq!(thread.comments.len(), 1);
         assert_eq!(thread.comments[0].author.as_deref(), Some("alice"));
         assert_eq!(thread.comments[0].body, "Can this be simplified?");
+    }
+
+    #[test]
+    fn reaction_groups_do_not_multiply_graphql_nodes() {
+        let query = build_query(None);
+        assert!(query.contains("reactionGroups"));
+        assert!(!query.contains("reactions(first:"));
+    }
+
+    #[test]
+    fn parses_reaction_counts_and_viewer_identity() {
+        let json = serde_json::json!({"data": {"repository": {
+            "pullRequest": {"reviewThreads": {"nodes": [{"id": "thread", "comments": {"nodes": [{
+                "id": "comment", "reactionGroups": [
+                    {"content": "HEART", "reactors": {"totalCount": 2}, "viewerHasReacted": true},
+                    {"content": "EYES", "reactors": {"totalCount": 1}, "viewerHasReacted": false}
+                ]
+            }]}}]}}
+        }}})
+        .to_string();
+        let parsed = parse_graphql_page(&json).unwrap();
+        let reactions = &parsed.threads[0].comments[0].reactions;
+        assert_eq!(reactions.len(), 2);
+        assert_eq!(reactions[0].count, 2);
+        assert!(reactions[0].viewer_has_reacted);
+        assert_eq!(reactions[1].count, 1);
+        assert!(!reactions[1].viewer_has_reacted);
     }
 
     #[test]

@@ -1221,6 +1221,7 @@ fn resolution_test_thread() -> crate::forge::remote_comments::RemoteReviewThread
                 url: String::new(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             })
             .collect(),
     }
@@ -1380,6 +1381,7 @@ fn should_confirm_owned_remote_comment_without_touching_a_code_line() {
             url: String::new(),
             review_id: Some("PRR_1".into()),
             review_database_id: Some("42".into()),
+            reactions: Vec::new(),
         }],
     }];
     app.rebuild_annotations();
@@ -1447,6 +1449,7 @@ fn should_match_locked_file_comment_to_remote_review_id() {
             url: String::new(),
             review_id: Some("PRR_42".into()),
             review_database_id: Some("42".into()),
+            reactions: Vec::new(),
         }],
     }];
     app.rebuild_annotations();
@@ -1546,6 +1549,7 @@ fn should_reject_other_users_remote_comments() {
             url: String::new(),
             review_id: None,
             review_database_id: None,
+            reactions: Vec::new(),
         }],
     }];
     app.rebuild_annotations();
@@ -1621,6 +1625,7 @@ fn should_apply_successful_remote_delete_and_ignore_stale_pr_result() {
             url: String::new(),
             review_id: None,
             review_database_id: None,
+            reactions: Vec::new(),
         }],
     }];
     let key = match &app.diff_source {
@@ -1728,6 +1733,7 @@ fn should_yank_remote_comment_from_its_anchor_line_or_thread() {
                 url: "https://example.com/comment-1".into(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             },
             RemoteReviewComment {
                 id: "comment-2".into(),
@@ -1738,6 +1744,7 @@ fn should_yank_remote_comment_from_its_anchor_line_or_thread() {
                 url: "https://example.com/comment-2".into(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             },
         ],
     }];
@@ -1805,6 +1812,7 @@ fn should_yank_rendered_remote_thread_when_hidden_thread_shares_its_anchor() {
         url: format!("https://example.com/{id}"),
         review_id: None,
         review_database_id: None,
+        reactions: Vec::new(),
     };
     let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
     app.forge_review_threads = vec![
@@ -1873,6 +1881,7 @@ fn should_yank_reply_from_multiline_review_level_thread_footer() {
                 url: "https://example.com/root".into(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             },
             RemoteReviewComment {
                 id: "reply".into(),
@@ -1883,6 +1892,7 @@ fn should_yank_reply_from_multiline_review_level_thread_footer() {
                 url: "https://example.com/reply".into(),
                 review_id: None,
                 review_database_id: None,
+                reactions: Vec::new(),
             },
         ],
     }];
@@ -1972,4 +1982,257 @@ fn should_yank_top_level_pr_comment() {
         app.remote_comment_content_at_cursor(),
         Some("Top-level PR comment".to_string())
     );
+}
+
+#[test]
+fn reaction_picker_aborts_when_comment_missing_on_select() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|annotation| {
+            matches!(
+                annotation,
+                AnnotatedLine::RemoteThreadLine { comment_idx: 1, .. }
+            )
+        })
+        .unwrap();
+    app.open_reaction_picker();
+    assert_eq!(app.input_mode, InputMode::ReactionPicker);
+    let selected_id = app.reaction_target.as_ref().unwrap().1.clone();
+    app.forge_review_threads.clear();
+    app.select_reaction();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.pr_reaction_rx.is_none());
+    assert!(
+        app.message
+            .as_ref()
+            .unwrap()
+            .content
+            .contains("no longer available")
+    );
+    assert!(!selected_id.is_empty());
+}
+
+#[test]
+fn reaction_picker_tracks_comment_id_across_reordering() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|annotation| {
+            matches!(
+                annotation,
+                AnnotatedLine::RemoteThreadLine { comment_idx: 1, .. }
+            )
+        })
+        .unwrap();
+    app.open_reaction_picker();
+    assert_eq!(app.input_mode, InputMode::ReactionPicker);
+    assert_eq!(
+        app.reaction_target.as_ref().map(|(_, id)| id.as_str()),
+        Some("PRRC_1")
+    );
+
+    // Prepend a different thread so thread and comment positions shift
+    let mut other_thread = resolution_test_thread();
+    other_thread.id = "PRRT_other".into();
+    other_thread.comments[0].id = "PRRC_other_0".into();
+    other_thread.comments[1].id = "PRRC_other_1".into();
+    app.forge_review_threads.insert(0, other_thread);
+
+    let mut captured = None;
+    app.select_reaction_with_worker(|key, comment_id, content, remove, tx| {
+        captured = Some((key, comment_id, content, remove, tx));
+    });
+
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.reaction_target.is_none());
+    assert!(app.pr_reaction_rx.is_some());
+    assert_eq!(
+        app.message.as_ref().unwrap().content,
+        "Updating GitHub reaction…"
+    );
+    let (key, comment_id, content, remove, _tx) =
+        captured.expect("worker should have been invoked");
+    let expected_key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => panic!(),
+    };
+    assert_eq!(key, expected_key);
+    assert_eq!(comment_id, "PRRC_1");
+    assert_eq!(content, "THUMBS_UP");
+    assert!(!remove);
+}
+
+#[test]
+fn comment_reaction_is_remove_evaluates_viewer_state() {
+    use crate::forge::remote_comments::{RemoteReaction, RemoteReviewComment};
+    let mut comment = RemoteReviewComment {
+        id: "PRRC_1".into(),
+        author: Some("alice".into()),
+        body: "test".into(),
+        created_at: None,
+        in_reply_to: None,
+        url: String::new(),
+        review_id: None,
+        review_database_id: None,
+        reactions: Vec::new(),
+    };
+
+    assert!(!App::comment_reaction_is_remove(&comment, "THUMBS_UP"));
+
+    comment.reactions.push(RemoteReaction {
+        content: "THUMBS_UP".into(),
+        count: 1,
+        viewer_has_reacted: false,
+    });
+    assert!(!App::comment_reaction_is_remove(&comment, "THUMBS_UP"));
+
+    comment.reactions[0].viewer_has_reacted = true;
+    assert!(App::comment_reaction_is_remove(&comment, "THUMBS_UP"));
+    assert!(!App::comment_reaction_is_remove(&comment, "HEART"));
+}
+
+fn deliver_reaction_event_with_spy(
+    app: &mut App,
+    key: PrSessionKey,
+    result: std::result::Result<(), String>,
+) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.pr_reaction_rx = Some(rx);
+    tx.send(crate::app::reactions::PrReactionEvent { key, result })
+        .unwrap();
+    let mut refetched = false;
+    app.poll_pr_reaction_events_with_refetch(|_| refetched = true);
+    refetched
+}
+
+#[test]
+fn poll_pr_reaction_events_success_sets_message_and_refetches() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    let key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => panic!(),
+    };
+
+    let refetched = deliver_reaction_event_with_spy(&mut app, key, Ok(()));
+    assert!(app.pr_reaction_rx.is_none());
+    assert_eq!(
+        app.message.as_ref().unwrap().message_type,
+        MessageType::Info
+    );
+    assert_eq!(
+        app.message.as_ref().unwrap().content,
+        "GitHub reaction updated"
+    );
+    assert!(refetched);
+}
+
+#[test]
+fn poll_pr_reaction_events_error_surfaces_error() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    let key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => panic!(),
+    };
+
+    let refetched =
+        deliver_reaction_event_with_spy(&mut app, key, Err("API rate limit exceeded".into()));
+    assert!(app.pr_reaction_rx.is_none());
+    assert_eq!(
+        app.message.as_ref().unwrap().message_type,
+        MessageType::Error
+    );
+    assert!(
+        app.message
+            .as_ref()
+            .unwrap()
+            .content
+            .contains("API rate limit exceeded")
+    );
+    assert!(refetched);
+}
+
+#[test]
+fn poll_pr_reaction_events_wrong_pr_ignores_event() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    let mut other_key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => panic!(),
+    };
+    other_key.number = 999999;
+
+    let refetched = deliver_reaction_event_with_spy(&mut app, other_key, Ok(()));
+    assert!(app.pr_reaction_rx.is_none());
+    assert!(app.message.is_none());
+    assert!(!refetched);
+}
+
+#[test]
+fn poll_pr_reaction_events_worker_disconnect_surfaces_error() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    let (tx, rx) = std::sync::mpsc::channel::<crate::app::reactions::PrReactionEvent>();
+    app.pr_reaction_rx = Some(rx);
+    drop(tx);
+    let mut refetched = false;
+    app.poll_pr_reaction_events_with_refetch(|_| refetched = true);
+    assert!(app.pr_reaction_rx.is_none());
+    assert_eq!(
+        app.message.as_ref().unwrap().message_type,
+        MessageType::Error
+    );
+    assert!(
+        app.message
+            .as_ref()
+            .unwrap()
+            .content
+            .contains("worker disconnected")
+    );
+    assert!(refetched);
+}
+
+#[test]
+fn select_reaction_does_not_abort_when_github_busy() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|annotation| matches!(annotation, AnnotatedLine::RemoteThreadLine { .. }))
+        .unwrap();
+    app.open_reaction_picker();
+    assert_eq!(app.input_mode, InputMode::ReactionPicker);
+    assert!(app.reaction_target.is_some());
+
+    // Simulate busy background thread operation
+    app.forge_review_threads_loading = true;
+    app.select_reaction();
+    assert_eq!(app.input_mode, InputMode::ReactionPicker);
+    assert!(app.reaction_target.is_some());
+    assert_eq!(
+        app.message.as_ref().unwrap().content,
+        "Wait for the current GitHub operation to finish"
+    );
+}
+
+#[test]
+fn reaction_picker_refuses_background_thread_refresh() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|annotation| matches!(annotation, AnnotatedLine::RemoteThreadLine { .. }))
+        .unwrap();
+    app.forge_review_threads_loading = true;
+    app.open_reaction_picker();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.reaction_target.is_none());
 }

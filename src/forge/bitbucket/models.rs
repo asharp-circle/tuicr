@@ -407,6 +407,7 @@ impl BbComment {
             url: self.links.html_href(),
             review_id: None,
             review_database_id: None,
+            reactions: Vec::new(),
         }
     }
 
