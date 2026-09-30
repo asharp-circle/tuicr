@@ -1432,10 +1432,30 @@ fn comment_navigator_items_follow_rendered_comment_order() {
             reactions: Vec::new(),
         }],
     }];
+    app.session.review_comments[0].lifecycle_state =
+        crate::model::comment::CommentLifecycleState::Submitted;
+    app.session
+        .files
+        .get_mut(&PathBuf::from("a.rs"))
+        .unwrap()
+        .file_comments[0]
+        .lifecycle_state = crate::model::comment::CommentLifecycleState::PushedDraft;
     app.rebuild_annotations();
 
     let items = app.build_comment_navigator_items();
 
+    assert!(matches!(
+        items[0].kind,
+        CommentNavigatorKind::Local(_, crate::model::comment::CommentLifecycleState::Submitted)
+    ));
+    assert!(matches!(
+        items[1].kind,
+        CommentNavigatorKind::Local(_, crate::model::comment::CommentLifecycleState::PushedDraft)
+    ));
+    assert!(matches!(
+        items[2].kind,
+        CommentNavigatorKind::Local(_, crate::model::comment::CommentLifecycleState::LocalDraft)
+    ));
     assert_eq!(items.len(), 4);
     assert!(matches!(
         items[0].key,
