@@ -143,6 +143,8 @@ impl App {
             self.comment_type = self.default_comment_type();
             self.comment_is_review_level = false;
             self.comment_is_file_level = false;
+            self.reply_thread_id = None;
+            self.editing_comment_id = None;
             self.visual_selection = None;
         } else {
             self.set_warning("Invalid visual selection");

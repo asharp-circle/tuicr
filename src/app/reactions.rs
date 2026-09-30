@@ -6,6 +6,7 @@ impl App {
         self.pr_reaction_rx.is_some()
             || self.pr_threads_rx.is_some()
             || self.pr_delete_rx.is_some()
+            || self.pr_reply_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
             || self.forge_review_threads_loading
     }

@@ -2236,3 +2236,183 @@ fn reaction_picker_refuses_background_thread_refresh() {
     assert_eq!(app.input_mode, InputMode::Normal);
     assert!(app.reaction_target.is_none());
 }
+
+#[test]
+fn thread_reply_mode_targets_remote_row_without_creating_local_draft() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    let row = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::RemoteThreadLine { comment_idx: 1, .. }))
+        .unwrap();
+    app.diff_state.cursor_line = row;
+    assert!(app.enter_thread_reply_mode());
+    assert_eq!(app.input_mode, InputMode::Comment);
+    assert_eq!(app.reply_thread_id.as_deref(), Some("PRRT_1"));
+    assert!(app.comment_line.is_none());
+    assert!(app.session.review_comments.is_empty());
+    assert!(
+        app.session
+            .files
+            .values()
+            .all(|f| f.line_comments.is_empty())
+    );
+    assert_eq!(app.line_annotations.len(), app.total_lines());
+    app.exit_comment_mode();
+    assert!(app.reply_thread_id.is_none());
+    assert_eq!(app.line_annotations.len(), app.total_lines());
+}
+
+#[test]
+fn thread_reply_dispatch_clears_vim_overlay() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::RemoteThreadLine { .. }))
+        .unwrap();
+    assert!(app.enter_thread_reply_mode());
+    app.comment_vim_enabled = true;
+    app.comment_buffer = "reply".into();
+    app.ensure_comment_vim_editor();
+    assert!(app.comment_vim_editor.is_some());
+    app.start_comment_vim_command();
+    app.comment_vim_pending = CommentVimPending::Save;
+    app.save_comment();
+    assert!(app.comment_vim_editor.is_none());
+    assert!(app.comment_vim_command.is_none());
+    assert_eq!(app.comment_vim_pending, CommentVimPending::None);
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert_eq!(
+        app.pending_thread_reply,
+        Some(("PRRT_1".into(), "reply".into()))
+    );
+}
+
+#[test]
+fn failed_thread_reply_keeps_text_available_for_retry() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::RemoteThreadLine { .. }))
+        .unwrap();
+    assert!(app.enter_thread_reply_mode());
+    app.comment_buffer = "retry this reply".into();
+    let key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => panic!(),
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.pr_reply_rx = Some(rx);
+    app.pending_thread_reply = Some(("PRRT_1".into(), "retry this reply".into()));
+    assert!(app.has_pending_pr_work());
+    app.exit_comment_mode();
+    tx.send(PrReplyEvent::Done {
+        repository: key.repository,
+        pr_number: key.number,
+        head_sha: key.head_sha,
+        thread_id: "PRRT_1".into(),
+        result: Err("server rejected reply".into()),
+    })
+    .unwrap();
+    app.poll_pr_reply_events();
+    assert!(!app.has_pending_pr_work());
+    assert_eq!(
+        app.failed_thread_reply,
+        Some(("PRRT_1".into(), "retry this reply".into()))
+    );
+    app.forge_review_threads[0].id = "PRRT_2".into();
+    app.rebuild_annotations();
+    assert!(app.enter_thread_reply_mode());
+    assert!(app.comment_buffer.is_empty());
+    app.exit_comment_mode();
+    app.forge_review_threads[0].id = "PRRT_1".into();
+    app.rebuild_annotations();
+    assert!(app.enter_thread_reply_mode());
+    assert_eq!(app.comment_buffer, "retry this reply");
+}
+
+#[test]
+fn thread_reply_completion_does_not_erase_another_open_comment() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    let key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => panic!(),
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.pr_reply_rx = Some(rx);
+    app.pending_thread_reply = Some(("PRRT_1".into(), "already sent".into()));
+    app.enter_comment_mode(false, Some((1, LineSide::New)));
+    app.comment_buffer = "new draft".into();
+    tx.send(PrReplyEvent::Done {
+        repository: key.repository,
+        pr_number: key.number,
+        head_sha: key.head_sha,
+        thread_id: "PRRT_1".into(),
+        result: Ok(crate::forge::remote_comments::RemoteReviewComment {
+            id: "PRRC_new".into(),
+            author: Some("me".into()),
+            body: "already sent".into(),
+            created_at: None,
+            in_reply_to: None,
+            url: String::new(),
+            review_id: None,
+            review_database_id: None,
+            reactions: Vec::new(),
+        }),
+    })
+    .unwrap();
+    app.poll_pr_reply_events();
+    assert_eq!(app.comment_buffer, "new draft");
+    assert_eq!(app.input_mode, InputMode::Comment);
+}
+
+#[test]
+fn thread_reply_completion_updates_only_matching_pr_and_deduplicates_comment() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    let key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => panic!(),
+    };
+    let reply = crate::forge::remote_comments::RemoteReviewComment {
+        id: "PRRC_new".into(),
+        author: Some("me".into()),
+        body: "reply".into(),
+        created_at: None,
+        in_reply_to: Some("PRRC_0".into()),
+        url: String::new(),
+        review_id: None,
+        review_database_id: None,
+        reactions: Vec::new(),
+    };
+    let deliver = |app: &mut App, sha: String| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.pr_reply_rx = Some(rx);
+        tx.send(PrReplyEvent::Done {
+            repository: key.repository.clone(),
+            pr_number: key.number,
+            head_sha: sha,
+            thread_id: "PRRT_1".into(),
+            result: Ok(reply.clone()),
+        })
+        .unwrap();
+        app.poll_pr_reply_events();
+    };
+    deliver(&mut app, "old-sha".into());
+    assert_eq!(app.forge_review_threads[0].comments.len(), 2);
+    deliver(&mut app, key.head_sha.clone());
+    assert_eq!(app.forge_review_threads[0].comments.len(), 3);
+    assert_eq!(app.line_annotations.len(), app.total_lines());
+    deliver(&mut app, key.head_sha);
+    assert_eq!(app.forge_review_threads[0].comments.len(), 3);
+}
