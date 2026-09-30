@@ -509,6 +509,7 @@ pub(super) fn render_side_by_side_diff(frame: &mut Frame, app: &mut App, area: R
                 None,
                 ctx.panel_width.saturating_sub(1),
                 (comment.author != app.username).then_some(comment.author.as_str()),
+                Some(comment.lifecycle_state),
             );
             for mut comment_line in comment_lines {
                 let indicator = cursor_indicator(line_idx, ctx.current_line_idx);
@@ -702,6 +703,7 @@ pub(super) fn render_side_by_side_diff(frame: &mut Frame, app: &mut App, area: R
                         None,
                         ctx.panel_width.saturating_sub(1),
                         (comment.author != app.username).then_some(comment.author.as_str()),
+                        Some(comment.lifecycle_state),
                     );
                     for mut comment_line in comment_lines {
                         let indicator = cursor_indicator(line_idx, ctx.current_line_idx);
@@ -2120,6 +2122,7 @@ fn add_comments_to_line(
                             line_range,
                             ctx.panel_width.saturating_sub(1),
                             (comment.author != ctx.app.username).then_some(comment.author.as_str()),
+                            Some(comment.lifecycle_state),
                         );
                         for mut comment_line in comment_lines {
                             let indicator = cursor_indicator(line_idx, ctx.current_line_idx);
@@ -2388,6 +2391,40 @@ mod remote_comments_side_by_side_snapshot_tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn local_inline_comment_status_follows_lifecycle() {
+        use crate::model::comment::CommentLifecycleState;
+        use crate::model::{Comment, CommentType};
+
+        let mut app = make_pr_app();
+        let path = std::path::PathBuf::from("src/lib.rs");
+        let mut comment = Comment::new("status test".into(), CommentType::default(), None);
+        app.session
+            .get_file_mut(&path)
+            .unwrap()
+            .add_line_comment(2, comment.clone());
+        app.rebuild_annotations();
+        assert!(body_text(&draw(&mut app)).contains("[pending]"));
+
+        comment.lifecycle_state = CommentLifecycleState::PushedDraft;
+        app.session
+            .get_file_mut(&path)
+            .unwrap()
+            .line_comments
+            .get_mut(&2)
+            .unwrap()[0] = comment.clone();
+        assert!(body_text(&draw(&mut app)).contains("[draft on forge]"));
+
+        comment.lifecycle_state = CommentLifecycleState::Submitted;
+        app.session
+            .get_file_mut(&path)
+            .unwrap()
+            .line_comments
+            .get_mut(&2)
+            .unwrap()[0] = comment;
+        assert!(body_text(&draw(&mut app)).contains("[published]"));
     }
 
     /// Side-by-side mirror of the unified culling test: the skip/emit wiring

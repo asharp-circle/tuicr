@@ -497,6 +497,7 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
             ),
             Span::raw("Jump to selected comment"),
         ]),
+        Line::from("  Local badges: pending / draft on forge / published"),
         Line::from(""),
         Line::from(Span::styled(
             "Review Actions",

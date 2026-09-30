@@ -177,6 +177,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                 None,
                 comment_width,
                 (comment.author != app.username).then_some(comment.author.as_str()),
+                Some(comment.lifecycle_state),
             );
             for mut comment_line in comment_lines {
                 let indicator = cursor_indicator(line_idx, current_line_idx);
@@ -379,6 +380,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                         None,
                         comment_width,
                         (comment.author != app.username).then_some(comment.author.as_str()),
+                        Some(comment.lifecycle_state),
                     );
                     for mut comment_line in comment_lines {
                         let indicator = cursor_indicator(line_idx, current_line_idx);
@@ -793,6 +795,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                                                 comment_width,
                                                 (comment.author != app.username)
                                                     .then_some(comment.author.as_str()),
+                                                Some(comment.lifecycle_state),
                                             );
                                             for mut comment_line in comment_lines {
                                                 let is_current = line_idx == current_line_idx;
@@ -981,6 +984,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                                                 comment_width,
                                                 (comment.author != app.username)
                                                     .then_some(comment.author.as_str()),
+                                                Some(comment.lifecycle_state),
                                             );
                                             for mut comment_line in comment_lines {
                                                 let indicator =
@@ -2022,6 +2026,40 @@ mod remote_comments_snapshot_tests {
             "expected logical visible_line_count 1..20, got {}",
             app.diff_state.visible_line_count
         );
+    }
+
+    #[test]
+    fn local_inline_comment_status_follows_lifecycle() {
+        use crate::model::comment::CommentLifecycleState;
+        use crate::model::{Comment, CommentType};
+
+        let mut app = make_pr_app();
+        let path = std::path::PathBuf::from("src/lib.rs");
+        let mut comment = Comment::new("status test".into(), CommentType::default(), None);
+        app.session
+            .get_file_mut(&path)
+            .unwrap()
+            .add_line_comment(2, comment.clone());
+        app.rebuild_annotations();
+        assert!(body_text(&draw_unified_diff(&mut app)).contains("[pending]"));
+
+        comment.lifecycle_state = CommentLifecycleState::PushedDraft;
+        app.session
+            .get_file_mut(&path)
+            .unwrap()
+            .line_comments
+            .get_mut(&2)
+            .unwrap()[0] = comment.clone();
+        assert!(body_text(&draw_unified_diff(&mut app)).contains("[draft on forge]"));
+
+        comment.lifecycle_state = CommentLifecycleState::Submitted;
+        app.session
+            .get_file_mut(&path)
+            .unwrap()
+            .line_comments
+            .get_mut(&2)
+            .unwrap()[0] = comment;
+        assert!(body_text(&draw_unified_diff(&mut app)).contains("[published]"));
     }
 
     /// Comment boxes outside the viewport are replaced with blank placeholder

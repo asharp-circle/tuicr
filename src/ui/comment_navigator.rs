@@ -58,14 +58,15 @@ pub(super) fn render_comment_navigator(
 }
 
 fn render_comment_row(app: &App, item: &CommentNavigatorItem) -> Line<'static> {
-    let (marker, marker_style) = match &item.kind {
-        CommentNavigatorKind::Local(comment_type) => {
+    let (marker, marker_style, state) = match &item.kind {
+        CommentNavigatorKind::Local(comment_type, lifecycle) => {
             let label = app.comment_type_label(comment_type);
             // `None` comments have an empty label; show a neutral bullet marker.
             let marker = label.chars().next().unwrap_or('•').to_string();
             (
                 marker,
                 styles::comment_type_style(&app.theme, app.comment_type_color(comment_type)),
+                Some(*lifecycle),
             )
         }
         CommentNavigatorKind::Remote { muted } => {
@@ -76,7 +77,7 @@ fn render_comment_row(app: &App, item: &CommentNavigatorItem) -> Line<'static> {
                     .fg(app.theme.diff_hunk_header)
                     .add_modifier(Modifier::BOLD)
             };
-            ("R".to_string(), style)
+            ("R".to_string(), style, None)
         }
     };
 
@@ -89,6 +90,12 @@ fn render_comment_row(app: &App, item: &CommentNavigatorItem) -> Line<'static> {
         .and_then(|author| styles::author_accent(&app.username, author));
 
     let mut spans = vec![Span::styled(marker, marker_style), Span::raw(" ")];
+    if let Some(state) = state {
+        spans.push(Span::styled(
+            format!("[{}] ", crate::ui::comment_panel::lifecycle_label(state)),
+            crate::ui::comment_panel::lifecycle_style(&app.theme, state),
+        ));
+    }
     if let Some(color) = author_accent {
         spans.push(Span::styled(
             "● ".to_string(),

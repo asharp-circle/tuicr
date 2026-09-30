@@ -10,6 +10,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::app::App;
 use crate::forge::traits::ForgeKind;
 use crate::model::LineRange;
+use crate::model::comment::CommentLifecycleState;
 use crate::theme::Theme;
 use crate::ui::styles;
 
@@ -461,13 +462,25 @@ pub(crate) fn markdown_body_lines(
     out
 }
 
-/// Format a comment as multiple lines with a box border (themed version).
-///
-/// `author` advertises the comment's author in the top-row badge and tints
-/// the box border. Callers pass `Some(name)` for non-self comments — the
-/// resulting badge reads `[TYPE @name]`, mirroring the remote forge badge
-/// format used for remote PR threads. `None` keeps the existing neutral
-/// `[TYPE]` badge and theme border.
+pub(super) fn lifecycle_label(state: CommentLifecycleState) -> &'static str {
+    match state {
+        CommentLifecycleState::LocalDraft => "pending",
+        CommentLifecycleState::PushedDraft => "draft on forge",
+        CommentLifecycleState::Submitted => "published",
+    }
+}
+
+pub(super) fn lifecycle_style(theme: &Theme, state: CommentLifecycleState) -> Style {
+    Style::default()
+        .fg(match state {
+            CommentLifecycleState::LocalDraft => theme.comment_note,
+            _ => theme.diff_hunk_header,
+        })
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Format a comment box with its lifecycle status in the header.
+/// Pass `None` only for forge-owned comments.
 pub fn format_comment_lines(
     theme: &Theme,
     comment_type: CommentTypePresentation,
@@ -475,6 +488,7 @@ pub fn format_comment_lines(
     line_range: Option<LineRange>,
     width: usize,
     author: Option<&str>,
+    lifecycle: Option<CommentLifecycleState>,
 ) -> Vec<Line<'static>> {
     let type_style = styles::comment_type_style(theme, comment_type.color);
     let border_style = match author {
@@ -492,7 +506,8 @@ pub fn format_comment_lines(
         (None, true) => String::new(),
         (None, false) => format!("[{}] ", comment_type.label),
     };
-    let badge_width = badge_text.width();
+    let state = lifecycle.map(|state| format!("[{}] ", lifecycle_label(state)));
+    let badge_width = badge_text.width() + state.as_deref().map_or(0, str::width);
 
     let line_info = match line_range {
         Some(range) if range.is_single() => format!("L{} ", range.start),
@@ -517,6 +532,10 @@ pub fn format_comment_lines(
     result.push(Line::from(vec![
         Span::styled(top_prefix, border_style),
         Span::styled(badge_text, type_style),
+        Span::styled(
+            state.unwrap_or_default(),
+            lifecycle.map_or(Style::default(), |state| lifecycle_style(theme, state)),
+        ),
         Span::styled(line_info, styles::dim_style(theme)),
         Span::styled("─".repeat(top_fill), border_style),
     ]));
@@ -628,6 +647,7 @@ mod tests {
                     // cursor-indicator column.
                     viewport_width.saturating_sub(1),
                     None,
+                    Some(comment.lifecycle_state),
                 );
                 assert_eq!(
                     App::comment_display_lines(&comment, viewport_width),
@@ -635,6 +655,35 @@ mod tests {
                     "width={viewport_width} body={body:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn local_comment_badges_distinguish_pending_draft_and_published() {
+        let theme = test_theme();
+        for (state, expected) in [
+            (CommentLifecycleState::LocalDraft, "[pending]"),
+            (CommentLifecycleState::PushedDraft, "[draft on forge]"),
+            (CommentLifecycleState::Submitted, "[published]"),
+        ] {
+            let lines = format_comment_lines(
+                &theme,
+                CommentTypePresentation {
+                    label: String::new(),
+                    color: Color::Blue,
+                },
+                "body",
+                None,
+                80,
+                None,
+                Some(state),
+            );
+            let header: String = lines[0]
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            assert!(header.contains(expected), "{header}");
         }
     }
 
@@ -1031,6 +1080,7 @@ mod tests {
             None,
             80,
             None,
+            Some(CommentLifecycleState::LocalDraft),
         );
         // Header + footer wrap the body; reconstruct must round-trip the text.
         assert_eq!(reconstruct(&lines), content);
