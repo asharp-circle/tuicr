@@ -1572,7 +1572,7 @@ pub enum CommentNavigatorKey {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommentNavigatorKind {
-    Local(CommentType),
+    Local(CommentType, crate::model::comment::CommentLifecycleState),
     Remote { muted: bool },
 }
 

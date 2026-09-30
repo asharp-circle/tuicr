@@ -103,7 +103,10 @@ impl App {
                 let comment = self.session.review_comments.get(comment_idx)?;
                 Some(CommentNavigatorItem {
                     key: CommentNavigatorKey::Review { comment_idx },
-                    kind: CommentNavigatorKind::Local(comment.comment_type.clone()),
+                    kind: CommentNavigatorKind::Local(
+                        comment.comment_type.clone(),
+                        comment.lifecycle_state,
+                    ),
                     target_annotation,
                     path: None,
                     line: None,
@@ -123,7 +126,10 @@ impl App {
                         file_idx,
                         comment_idx,
                     },
-                    kind: CommentNavigatorKind::Local(comment.comment_type.clone()),
+                    kind: CommentNavigatorKind::Local(
+                        comment.comment_type.clone(),
+                        comment.lifecycle_state,
+                    ),
                     target_annotation,
                     path: Some(path.display().to_string()),
                     line: None,
@@ -148,7 +154,10 @@ impl App {
                         side,
                         comment_idx,
                     },
-                    kind: CommentNavigatorKind::Local(comment.comment_type.clone()),
+                    kind: CommentNavigatorKind::Local(
+                        comment.comment_type.clone(),
+                        comment.lifecycle_state,
+                    ),
                     target_annotation,
                     path: Some(path.display().to_string()),
                     line: Some(line),

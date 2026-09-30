@@ -127,6 +127,8 @@ Shown below the file tree when local comments or visible remote PR threads exist
 | `h` / `l` | Scroll rows left / right |
 | `Enter` | Jump to selected comment |
 
+Inline comment boxes and comment navigator rows label local drafts **pending**, forge drafts **draft on forge**, and submitted comments **published**. Remote forge threads retain their forge badges.
+
 ## Review actions
 
 | Key | Action |

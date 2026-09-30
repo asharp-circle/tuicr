@@ -134,6 +134,8 @@ etc.).
 ² `gh pr review` posts approve/comment/request-changes at the review level only. No inline line
 comments.
 
+Inline comment boxes and comment navigator rows label local drafts **pending**, forge drafts **draft on forge**, and submitted comments **published**. Remote forge threads retain their forge badges.
+
 ## Export your review
 
 When you're done reviewing, send your comments wherever the work continues.
