@@ -1020,6 +1020,17 @@ pub(crate) struct PrThreadResolutionEvent {
 }
 
 #[derive(Debug)]
+pub(crate) enum PrReplyEvent {
+    Done {
+        repository: ForgeRepository,
+        pr_number: u64,
+        head_sha: String,
+        thread_id: String,
+        result: std::result::Result<crate::forge::remote_comments::RemoteReviewComment, String>,
+    },
+}
+
+#[derive(Debug)]
 pub(crate) enum PrDeleteEvent {
     Done {
         repository: ForgeRepository,
@@ -1228,6 +1239,10 @@ pub struct App {
     pub comment_is_file_level: bool,
     pub comment_line: Option<(u32, LineSide)>,
     pub editing_comment_id: Option<String>,
+    /// Remote thread being replied to in the comment box, identified independently of row indices.
+    pub reply_thread_id: Option<String>,
+    pub(crate) failed_thread_reply: Option<(String, String)>,
+    pub(crate) pending_thread_reply: Option<(String, String)>,
 
     pub visual_selection: Option<VisualSelection>,
     /// True once the active mouse drag has actually moved off the press cell.
@@ -1312,6 +1327,7 @@ pub struct App {
     pub pr_threads_rx: Option<std::sync::mpsc::Receiver<PrThreadsEvent>>,
     /// Completion of an in-flight GitHub comment deletion.
     pub(crate) pr_delete_rx: Option<std::sync::mpsc::Receiver<PrDeleteEvent>>,
+    pub(crate) pr_reply_rx: Option<std::sync::mpsc::Receiver<PrReplyEvent>>,
     pub(crate) pr_thread_resolution_rx: Option<std::sync::mpsc::Receiver<PrThreadResolutionEvent>>,
     pub(crate) pr_reaction_rx: Option<std::sync::mpsc::Receiver<reactions::PrReactionEvent>>,
     pub reaction_target: Option<(crate::forge::traits::PrSessionKey, String)>,

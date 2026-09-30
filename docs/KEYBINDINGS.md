@@ -135,7 +135,7 @@ Inline comment boxes and comment navigator rows label local drafts **pending**, 
 |-----|--------|
 | `r` | Toggle file reviewed |
 | `R` | Toggle hunk reviewed |
-| `c` | Add line comment (or file comment if not on a diff line) |
+| `c` | Add line comment on a diff line; on a displayed GitHub thread row, open a reply box and post directly to that thread |
 | `C` | Add file comment |
 | `<leader>c` | Add review comment |
 | `v` / `V` | Enter visual mode for range comments |

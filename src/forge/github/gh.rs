@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Result, TuicrError};
 use crate::forge::local_git::read_blob;
-use crate::forge::remote_comments::{RemoteReviewSummary, RemoteReviewThread};
+use crate::forge::remote_comments::{RemoteReviewComment, RemoteReviewSummary, RemoteReviewThread};
 use crate::forge::traits::{
     ForgeBackend, ForgeFileLinesRequest, ForgeRepository, GhCreateReviewResponse,
     PagedPullRequests, PullRequestCommit, PullRequestDetails, PullRequestInfo,
@@ -521,6 +521,78 @@ where
             ));
         }
         Ok(())
+    }
+
+    fn reply_to_review_thread(
+        &self,
+        repo: &ForgeRepository,
+        thread_id: &str,
+        body: &str,
+    ) -> Result<RemoteReviewComment> {
+        let query = "mutation($threadId: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) { comment { id body createdAt url author { login } replyTo { id } pullRequestReview { id fullDatabaseId } } } }";
+        let mut args = vec![
+            "api".to_string(),
+            "graphql".to_string(),
+            "-f".to_string(),
+            format!("query={query}"),
+            "-f".to_string(),
+            format!("threadId={thread_id}"),
+            "-f".to_string(),
+            format!("body={body}"),
+        ];
+        if repo.host != DEFAULT_GITHUB_HOST {
+            args.extend(["--hostname".to_string(), repo.host.clone()]);
+        }
+        let output = self.run_gh(args, &repo.host)?;
+        let response: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(errors) = response.get("errors") {
+            return Err(TuicrError::Forge(format!(
+                "GitHub thread reply failed: {errors}"
+            )));
+        }
+        let comment = response
+            .pointer("/data/addPullRequestReviewThreadReply/comment")
+            .ok_or_else(|| TuicrError::Forge("GitHub did not confirm thread reply".into()))?;
+        let id = comment
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| TuicrError::Forge("GitHub thread reply missing comment ID".into()))?;
+        Ok(RemoteReviewComment {
+            id: id.to_string(),
+            author: comment
+                .pointer("/author/login")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            body: comment
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or(body)
+                .to_string(),
+            created_at: comment
+                .get("createdAt")
+                .and_then(|v| v.as_str())
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|d| d.with_timezone(&chrono::Utc)),
+            in_reply_to: comment
+                .pointer("/replyTo/id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            url: comment
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            review_id: comment
+                .pointer("/pullRequestReview/id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            review_database_id: comment
+                .pointer("/pullRequestReview/fullDatabaseId")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            reactions: Vec::new(),
+        })
     }
 
     fn delete_review_comment(&self, repo: &ForgeRepository, id: &str) -> Result<()> {
@@ -1461,6 +1533,53 @@ index 1111111..2222222 100644
 
     fn repo() -> ForgeRepository {
         ForgeRepository::github("github.com", "agavra", "tuicr")
+    }
+
+    #[test]
+    fn replies_to_review_thread_with_graphql_variables_and_validates_result() {
+        struct ReplyRunner(std::cell::RefCell<Vec<Vec<String>>>, &'static str);
+        impl GhCommandRunner for ReplyRunner {
+            fn run(&self, args: &[String]) -> GhCommandResult<String> {
+                self.0.borrow_mut().push(args.to_vec());
+                Ok(self.1.into())
+            }
+        }
+        let success = r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"PRRC_2","body":"hello","author":{"login":"me"},"replyTo":{"id":"PRRC_1"},"url":"https://example.com/reply","pullRequestReview":{"id":"PRR_1","fullDatabaseId":"123"}}}}}"#;
+        let backend = GitHubGhBackend::with_runner(None, ReplyRunner(Default::default(), success));
+        let reply = backend
+            .reply_to_review_thread(
+                &ForgeRepository::github("github.example.com", "owner", "repo"),
+                "PRRT_1",
+                "hello\nworld",
+            )
+            .unwrap();
+        assert_eq!(reply.id, "PRRC_2");
+        assert_eq!(reply.in_reply_to.as_deref(), Some("PRRC_1"));
+        assert_eq!(reply.review_database_id.as_deref(), Some("123"));
+        let args = &backend.runner.0.borrow()[0];
+        assert!(
+            args.iter()
+                .any(|arg| arg.contains("addPullRequestReviewThreadReply"))
+        );
+        assert!(args.contains(&"threadId=PRRT_1".to_string()));
+        assert!(args.contains(&"body=hello\nworld".to_string()));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--hostname", "github.example.com"])
+        );
+
+        for response in [
+            r#"{"errors":[{"message":"forbidden"}]}"#,
+            r#"{"data":{"addPullRequestReviewThreadReply":{"comment":null}}}"#,
+        ] {
+            let backend =
+                GitHubGhBackend::with_runner(None, ReplyRunner(Default::default(), response));
+            assert!(
+                backend
+                    .reply_to_review_thread(&repo(), "PRRT_1", "body")
+                    .is_err()
+            );
+        }
     }
 
     #[test]

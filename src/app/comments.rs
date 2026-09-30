@@ -691,6 +691,7 @@ impl App {
         };
         if self.pr_reaction_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
+            || self.pr_reply_rx.is_some()
             || self.pr_delete_rx.is_some()
             || self.pr_threads_rx.is_some()
             || self.forge_review_threads_loading
@@ -873,8 +874,8 @@ impl App {
     }
 
     pub fn delete_comment_at_cursor(&mut self) -> bool {
-        if self.pr_delete_rx.is_some() {
-            self.set_message("Comment deletion already in progress");
+        if self.pr_delete_rx.is_some() || self.pr_reply_rx.is_some() {
+            self.set_message("Wait for the current GitHub operation");
             return false;
         }
         if self.pr_submit_rx.is_some() {
@@ -1086,6 +1087,7 @@ impl App {
         };
         if self.pr_submit_rx.is_some()
             || self.pr_delete_rx.is_some()
+            || self.pr_reply_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
             || self.pr_reaction_rx.is_some()
         {
@@ -1337,6 +1339,7 @@ impl App {
                     self.comment_is_file_level = false;
                     self.comment_line = None;
                     self.editing_comment_id = Some(comment.id.clone());
+                    self.reply_thread_id = None;
                     return true;
                 }
             }
@@ -1354,6 +1357,7 @@ impl App {
                     self.comment_is_file_level = true;
                     self.comment_line = None;
                     self.editing_comment_id = Some(comment.id.clone());
+                    self.reply_thread_id = None;
                     return true;
                 }
             }
@@ -1382,6 +1386,7 @@ impl App {
                         self.comment_is_file_level = false;
                         self.comment_line = Some((line, side));
                         self.editing_comment_id = Some(comment.id.clone());
+                        self.reply_thread_id = None;
                         return true;
                     }
                 }
@@ -1390,6 +1395,42 @@ impl App {
         }
 
         false
+    }
+
+    /// Start a reply only when the cursor is on a visible remote thread row.
+    pub fn enter_thread_reply_mode(&mut self) -> bool {
+        let Some(AnnotatedLine::RemoteThreadLine { thread_idx, .. }) =
+            self.line_annotations.get(self.diff_state.cursor_line)
+        else {
+            return false;
+        };
+        let Some(thread) = self.forge_review_threads.get(*thread_idx) else {
+            return false;
+        };
+        if self.forge_kind() != Some(crate::forge::traits::ForgeKind::GitHub) {
+            self.set_warning("Replying to threads is currently supported only on GitHub");
+            return true;
+        }
+        if let DiffSource::PullRequest(pr) = &self.diff_source
+            && let Some(reason) = pr.read_only_reason()
+        {
+            self.set_warning(format!("Cannot reply: PR is {reason}"));
+            return true;
+        }
+        let thread_id = thread.id.clone();
+        self.enter_comment_mode(false, None);
+        if self
+            .failed_thread_reply
+            .as_ref()
+            .is_some_and(|(id, _)| id == &thread_id)
+        {
+            let (_, text) = self.failed_thread_reply.take().unwrap();
+            self.comment_cursor = text.len();
+            self.comment_buffer = text;
+        }
+        self.reply_thread_id = Some(thread_id);
+        self.rebuild_annotations();
+        true
     }
 
     pub fn enter_comment_mode(&mut self, file_level: bool, line: Option<(u32, LineSide)>) {
@@ -1403,6 +1444,9 @@ impl App {
         self.comment_is_review_level = false;
         self.comment_is_file_level = file_level;
         self.comment_line = line;
+        self.comment_line_range = None;
+        self.editing_comment_id = None;
+        self.reply_thread_id = None;
     }
 
     pub fn enter_review_comment_mode(&mut self) {
@@ -1416,6 +1460,7 @@ impl App {
         self.comment_line = None;
         self.comment_line_range = None;
         self.editing_comment_id = None;
+        self.reply_thread_id = None;
     }
 
     pub fn exit_comment_mode(&mut self) {
@@ -1427,7 +1472,9 @@ impl App {
         self.comment_vim_pending = CommentVimPending::None;
         self.comment_is_review_level = false;
         self.editing_comment_id = None;
+        self.reply_thread_id = None;
         self.comment_line_range = None;
+        self.rebuild_annotations();
     }
 
     pub fn save_comment(&mut self) {
@@ -1437,6 +1484,10 @@ impl App {
         }
 
         let content = self.comment_buffer.trim().to_string();
+        if let Some(thread_id) = self.reply_thread_id.clone() {
+            self.start_thread_reply(thread_id, content);
+            return;
+        }
 
         let mut message = "Error: Could not save comment".to_string();
         let mut autosave_error = None;
@@ -1550,6 +1601,114 @@ impl App {
         self.rebuild_annotations();
 
         self.exit_comment_mode();
+    }
+
+    fn start_thread_reply(&mut self, thread_id: String, body: String) {
+        let DiffSource::PullRequest(pr) = &self.diff_source else {
+            self.set_warning("Thread reply requires a pull request");
+            return;
+        };
+        if let Some(reason) = pr.read_only_reason() {
+            self.set_warning(format!("Cannot reply: PR is {reason}"));
+            return;
+        }
+        if self.pr_reply_rx.is_some()
+            || self.pr_threads_rx.is_some()
+            || self.pr_submit_rx.is_some()
+            || self.pr_delete_rx.is_some()
+            || self.pr_thread_resolution_rx.is_some()
+            || self.pr_reaction_rx.is_some()
+        {
+            self.set_warning("Wait for the current GitHub operation to finish");
+            return;
+        }
+        if !self.forge_review_threads.iter().any(|t| t.id == thread_id) {
+            self.set_warning("Thread changed; refresh before replying");
+            return;
+        }
+        let repository = pr.key.repository.clone();
+        let pr_number = pr.key.number;
+        let head_sha = pr.key.head_sha.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pr_reply_rx = Some(rx);
+        self.pending_thread_reply = Some((thread_id.clone(), body.clone()));
+        self.exit_comment_mode();
+        std::thread::spawn(move || {
+            let backend = super::create_forge_backend(&repository, None, false, false);
+            let result = backend
+                .reply_to_review_thread(&repository, &thread_id, &body)
+                .map_err(|e| e.to_string());
+            let _ = tx.send(PrReplyEvent::Done {
+                repository,
+                pr_number,
+                head_sha,
+                thread_id,
+                result,
+            });
+        });
+        self.set_message("Posting thread reply to GitHub…");
+    }
+
+    pub fn poll_pr_reply_events(&mut self) {
+        let Some(rx) = self.pr_reply_rx.as_ref() else {
+            return;
+        };
+        let event = match rx.try_recv() {
+            Ok(event) => event,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pr_reply_rx = None;
+                self.failed_thread_reply = self.pending_thread_reply.take();
+                self.set_warning("Thread reply failed: worker disconnected; refresh to verify");
+                return;
+            }
+        };
+        self.pr_reply_rx = None;
+        let pending_reply = self.pending_thread_reply.take();
+        let PrReplyEvent::Done {
+            repository,
+            pr_number,
+            head_sha,
+            thread_id,
+            result,
+        } = event;
+        let DiffSource::PullRequest(pr) = &self.diff_source else {
+            return;
+        };
+        if pr.key.repository != repository
+            || pr.key.number != pr_number
+            || pr.key.head_sha != head_sha
+        {
+            return;
+        }
+        match result {
+            Ok(comment) => {
+                if self
+                    .failed_thread_reply
+                    .as_ref()
+                    .is_some_and(|(id, _)| id == &thread_id)
+                {
+                    self.failed_thread_reply = None;
+                }
+                if let Some(thread) = self
+                    .forge_review_threads
+                    .iter_mut()
+                    .find(|t| t.id == thread_id)
+                {
+                    if !thread.comments.iter().any(|c| c.id == comment.id) {
+                        thread.comments.push(comment);
+                    }
+                    self.rebuild_annotations();
+                    self.set_message("Thread reply posted");
+                } else {
+                    self.set_warning("Thread reply posted; refresh to see it");
+                }
+            }
+            Err(error) => {
+                self.failed_thread_reply = pending_reply.filter(|(id, _)| id == &thread_id);
+                self.set_error(format!("Thread reply failed: {error}"));
+            }
+        }
     }
 
     pub fn cycle_comment_type(&mut self) {

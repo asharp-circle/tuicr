@@ -207,9 +207,7 @@ impl App {
         }
     }
 
-    /// True while any forge background fetch (PR list/open/reload/threads/
-    /// submit) is in flight. Used by the main loop to keep redrawing so
-    /// spinners animate and results land without waiting for input.
+    /// True while forge work is in flight, so the main loop redraws on completion.
     pub fn has_pending_pr_work(&self) -> bool {
         self.pr_load_rx.is_some()
             || self.pr_open_rx.is_some()
@@ -218,6 +216,7 @@ impl App {
             || self.pr_threads_rx.is_some()
             || self.pr_submit_rx.is_some()
             || self.pr_delete_rx.is_some()
+            || self.pr_reply_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
             || self.pr_reaction_rx.is_some()
     }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::error::{Result, TuicrError};
-use crate::forge::remote_comments::RemoteReviewThread;
+use crate::forge::remote_comments::{RemoteReviewComment, RemoteReviewThread};
 use crate::forge::submit::SubmitEvent;
 use crate::model::{DiffLine, FilePatch, FileStatus};
 
@@ -594,6 +594,17 @@ pub trait ForgeBackend {
     ) -> Result<()> {
         Err(TuicrError::UnsupportedOperation(
             "Reactions require GitHub".into(),
+        ))
+    }
+    /// Post a reply to a remote review thread and return its forge comment.
+    fn reply_to_review_thread(
+        &self,
+        _repo: &ForgeRepository,
+        _thread_id: &str,
+        _body: &str,
+    ) -> Result<RemoteReviewComment> {
+        Err(TuicrError::UnsupportedOperation(
+            "Replying to review threads is not supported by this forge".into(),
         ))
     }
     /// Delete a viewer-owned remote inline comment by forge ID.

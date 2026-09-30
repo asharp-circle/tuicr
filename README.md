@@ -134,7 +134,7 @@ etc.).
 ² `gh pr review` posts approve/comment/request-changes at the review level only. No inline line
 comments.
 
-Inline comment boxes and comment navigator rows label local drafts **pending**, forge drafts **draft on forge**, and submitted comments **published**. Remote forge threads retain their forge badges.
+Inline comment boxes and comment navigator rows label local drafts **pending**, forge drafts **draft on forge**, and submitted comments **published**. Remote forge threads retain their forge badges. On a GitHub thread comment or reply, `c` opens a reply box; saving posts directly to that thread (other forges do not support thread replies yet).
 
 ## Export your review
 

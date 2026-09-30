@@ -223,6 +223,7 @@ Repository-managed agent integrations:
 - **Infinite scroll**: All files rendered into one `Vec<Line>`, then sliced by `scroll_offset`
 - **Inline comments**: Comments are rendered in `app_layout.rs` after file headers and after relevant diff lines
 - **GitHub reactions**: `+` on an annotated GitHub remote comment opens the reaction picker. GraphQL fetches reaction groups, counts, and viewer reaction state. Add/remove mutations run in a background thread, then refresh threads to update inline counts.
+- **GitHub thread replies**: `c` on a remote thread row opens an inline reply box. Saving posts `addPullRequestReviewThreadReply` asynchronously; the returned comment is appended to the thread and annotations rebuilt. Other forges report replies unsupported.
 - **GitHub thread resolution**: `x` on an annotated remote thread/comment row dispatches `resolveReviewThread` or `unresolveReviewThread` on a background worker. A PR-keyed completion updates `is_resolved` and rebuilds annotations; `:comments all` exposes resolved rows for reopening.
 - **Comment navigator**: Built from `line_annotations` in rendered order. Local review/file/line comments and visible remote threads appear as compact rows; selecting one calls `move_cursor_to_annotation()` so the diff viewport scrolls to the comment.
 - **Session loading**: `App::new()` calls manifest-backed persistence helpers to restore previous review

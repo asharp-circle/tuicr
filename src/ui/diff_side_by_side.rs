@@ -309,6 +309,7 @@ struct SideBySideContext<'a> {
     // intermediate function needing a `&mut Vec` parameter threaded through.
     comment_bars: std::cell::RefCell<Vec<crate::ui::diff_view::CommentBarAnchor>>,
     sbs_meta: std::cell::RefCell<std::collections::HashMap<usize, SbsRowMeta>>,
+    reply_input: std::cell::RefCell<Option<SideBySideCursorInfo>>,
     // Only fully build spans for diff lines whose `line_idx` falls in this
     // half-open range; off-screen rows push `Line::default()` placeholders.
     visible_start: usize,
@@ -376,7 +377,8 @@ pub(super) fn render_side_by_side_diff(frame: &mut Frame, app: &mut App, area: R
     // Determine if we're in line comment mode (not file-level)
     let comment_input_mode = app.input_mode == InputMode::Comment
         && !app.comment_is_file_level
-        && !app.comment_is_review_level;
+        && !app.comment_is_review_level
+        && app.reply_thread_id.is_none();
 
     let (visible_start, visible_end) = crate::ui::diff_view::diff_visible_range(app, inner);
 
@@ -397,6 +399,7 @@ pub(super) fn render_side_by_side_diff(frame: &mut Frame, app: &mut App, area: R
         current_file_idx: app.diff_state.current_file_idx,
         comment_bars: std::cell::RefCell::new(Vec::new()),
         sbs_meta: std::cell::RefCell::new(std::collections::HashMap::new()),
+        reply_input: std::cell::RefCell::new(None),
         visible_start,
         visible_end,
         search_style: styles::search_match_style(&app.theme),
@@ -550,6 +553,37 @@ pub(super) fn render_side_by_side_diff(frame: &mut Frame, app: &mut App, area: R
                     );
                     lines.push(comment_line);
                     line_idx += 1;
+                }
+                if app.reply_thread_id.as_deref() == Some(thread.id.as_str()) {
+                    let (input, cursor) = comment_panel::format_comment_input_lines(
+                        &app.theme,
+                        comment_type_presentation(app, &app.comment_type),
+                        &app.comment_buffer,
+                        app.comment_cursor,
+                        None,
+                        false,
+                        ctx.panel_width.saturating_sub(1),
+                        app.comment_vim_mode_label()
+                            .as_ref()
+                            .map(|(t, w)| (t.as_str(), *w)),
+                        app.supports_keyboard_enhancement,
+                    );
+                    comment_cursor_logical_line = Some(line_idx + cursor.line_offset);
+                    comment_cursor_column = 1 + cursor.column;
+                    comment_input_box_range =
+                        Some((line_idx, line_idx + input.len().saturating_sub(1)));
+                    annotation_offset = Some((line_idx, input.len(), 3));
+                    for mut row in input {
+                        row.spans.insert(
+                            0,
+                            Span::styled(
+                                cursor_indicator(line_idx, ctx.current_line_idx),
+                                styles::current_line_indicator_style(&app.theme),
+                            ),
+                        );
+                        lines.push(row);
+                        line_idx += 1;
+                    }
                 }
             }
         }
@@ -1010,6 +1044,14 @@ pub(super) fn render_side_by_side_diff(frame: &mut Frame, app: &mut App, area: R
         let mut m = ctx.sbs_meta.borrow_mut();
         std::mem::take(&mut *m)
     };
+    if let Some((cursor_line, cursor_col, box_start, box_end, replaced)) =
+        ctx.reply_input.borrow_mut().take()
+    {
+        comment_cursor_logical_line = Some(cursor_line);
+        comment_cursor_column = cursor_col;
+        comment_input_box_range = Some((box_start, box_end));
+        annotation_offset = Some((box_start, box_end - box_start + 1, replaced));
+    }
     drop(ctx);
     app.comment_input_annotation_offset = annotation_offset;
 
@@ -2022,6 +2064,37 @@ fn add_remote_threads_to_line(
             lines.push(comment_line);
             line_idx += 1;
         }
+        if ctx.app.reply_thread_id.as_deref() == Some(thread.id.as_str()) {
+            let (input, cursor) = comment_panel::format_comment_input_lines(
+                ctx.theme,
+                comment_type_presentation(ctx.app, &ctx.app.comment_type),
+                ctx.comment_buffer,
+                ctx.comment_cursor,
+                None,
+                false,
+                ctx.panel_width.saturating_sub(1),
+                ctx.app
+                    .comment_vim_mode_label()
+                    .as_ref()
+                    .map(|(t, w)| (t.as_str(), *w)),
+                ctx.app.supports_keyboard_enhancement,
+            );
+            let start = line_idx;
+            let end = start + input.len().saturating_sub(1);
+            *ctx.reply_input.borrow_mut() =
+                Some((start + cursor.line_offset, 1 + cursor.column, start, end, 3));
+            for mut row in input {
+                row.spans.insert(
+                    0,
+                    Span::styled(
+                        cursor_indicator(line_idx, ctx.current_line_idx),
+                        styles::current_line_indicator_style(ctx.theme),
+                    ),
+                );
+                lines.push(row);
+                line_idx += 1;
+            }
+        }
         crate::ui::diff_view::push_comment_bar(
             &mut ctx.comment_bars.borrow_mut(),
             box_top_row,
@@ -2324,6 +2397,27 @@ mod remote_comments_side_by_side_snapshot_tests {
                 reactions: Vec::new(),
             }],
         }
+    }
+
+    #[test]
+    fn reply_input_renders_in_side_by_side_view() {
+        let mut app = make_pr_app();
+        app.diff_view_mode = crate::app::DiffViewMode::SideBySide;
+        app.forge_review_threads = vec![thread()];
+        app.rebuild_annotations();
+        let row = app
+            .line_annotations
+            .iter()
+            .position(|a| matches!(a, crate::app::AnnotatedLine::RemoteThreadLine { .. }))
+            .unwrap();
+        app.diff_state.cursor_line = row;
+        assert!(app.enter_thread_reply_mode());
+        let body = body_text(&draw(&mut app));
+        assert!(
+            body.contains("sbs hello") && body.contains("Type your comment..."),
+            "{body}"
+        );
+        assert_eq!(app.line_annotations.len(), app.total_lines());
     }
 
     fn make_pr_app() -> App {

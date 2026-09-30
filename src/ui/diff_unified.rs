@@ -75,6 +75,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
     // Track the full extent of the comment input box so we can auto-scroll
     // the viewport to keep it visible while the user types.
     let mut comment_input_box_range: Option<(usize, usize)> = None;
+    let mut comment_input_annotation_offset = None;
     // Records per-comment bar info — populated at each line-level comment
     // call site and consumed by the bar paint pass at the end of render.
     let mut comment_bars: Vec<crate::ui::diff_view::CommentBarAnchor> = Vec::new();
@@ -218,6 +219,37 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                     );
                     lines.push(comment_line);
                     line_idx += 1;
+                }
+                if app.reply_thread_id.as_deref() == Some(thread.id.as_str()) {
+                    let (input, cursor) = comment_panel::format_comment_input_lines(
+                        &app.theme,
+                        comment_type_presentation(app, &app.comment_type),
+                        &app.comment_buffer,
+                        app.comment_cursor,
+                        None,
+                        false,
+                        comment_width,
+                        app.comment_vim_mode_label()
+                            .as_ref()
+                            .map(|(t, w)| (t.as_str(), *w)),
+                        app.supports_keyboard_enhancement,
+                    );
+                    comment_cursor_logical_line = Some(line_idx + cursor.line_offset);
+                    comment_cursor_column = 1 + cursor.column;
+                    comment_input_box_range =
+                        Some((line_idx, line_idx + input.len().saturating_sub(1)));
+                    app.comment_input_annotation_offset = Some((line_idx, input.len(), 3));
+                    for mut row in input {
+                        row.spans.insert(
+                            0,
+                            Span::styled(
+                                cursor_indicator(line_idx, current_line_idx),
+                                styles::current_line_indicator_style(&app.theme),
+                            ),
+                        );
+                        lines.push(row);
+                        line_idx += 1;
+                    }
                 }
             }
         }
@@ -695,6 +727,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                     if let Some(old_ln) = diff_line.old_lineno {
                         // Check if we're adding/editing a comment on this line (old side)
                         let is_line_comment_mode = app.input_mode == InputMode::Comment
+                            && app.reply_thread_id.is_none()
                             && !app.comment_is_file_level
                             && file_idx == app.diff_state.current_file_idx
                             && app.comment_line == Some((old_ln, LineSide::Old));
@@ -833,7 +866,12 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                             path,
                             old_ln,
                             LineSide::Old,
+                            comment_width,
                             &mut comment_bars,
+                            &mut comment_cursor_logical_line,
+                            &mut comment_cursor_column,
+                            &mut comment_input_box_range,
+                            &mut comment_input_annotation_offset,
                         );
 
                         // Render inline input for new line comment (old side)
@@ -884,6 +922,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                     if let Some(new_ln) = diff_line.new_lineno {
                         // Check if we're adding/editing a comment on this line (new side)
                         let is_line_comment_mode = app.input_mode == InputMode::Comment
+                            && app.reply_thread_id.is_none()
                             && !app.comment_is_file_level
                             && file_idx == app.diff_state.current_file_idx
                             && app.comment_line == Some((new_ln, LineSide::New));
@@ -1021,7 +1060,12 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                             path,
                             new_ln,
                             LineSide::New,
+                            comment_width,
                             &mut comment_bars,
+                            &mut comment_cursor_logical_line,
+                            &mut comment_cursor_column,
+                            &mut comment_input_box_range,
+                            &mut comment_input_annotation_offset,
                         );
 
                         // Render inline input for new line comment (new side)
@@ -1190,6 +1234,10 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
             )));
         }
         line_idx += 1;
+    }
+
+    if comment_input_annotation_offset.is_some() {
+        app.comment_input_annotation_offset = comment_input_annotation_offset;
     }
 
     // Auto-scroll so the comment input box stays visible while the user types.
@@ -1374,7 +1422,12 @@ fn render_remote_threads_for_anchor(
     file_path: &std::path::Path,
     line: u32,
     side: LineSide,
+    comment_width: usize,
     comment_bars: &mut Vec<crate::ui::diff_view::CommentBarAnchor>,
+    comment_cursor_logical_line: &mut Option<usize>,
+    comment_cursor_column: &mut u16,
+    comment_input_box_range: &mut Option<(usize, usize)>,
+    comment_input_annotation_offset: &mut Option<(usize, usize, usize)>,
 ) {
     let visibility = app.session.remote_comments_visibility;
     if matches!(visibility, PrCommentsVisibility::Hide) {
@@ -1427,6 +1480,36 @@ fn render_remote_threads_for_anchor(
             );
             lines.push(comment_line);
             *line_idx += 1;
+        }
+        if app.reply_thread_id.as_deref() == Some(thread.id.as_str()) {
+            let (input, cursor) = comment_panel::format_comment_input_lines(
+                &app.theme,
+                comment_type_presentation(app, &app.comment_type),
+                &app.comment_buffer,
+                app.comment_cursor,
+                None,
+                false,
+                comment_width,
+                app.comment_vim_mode_label()
+                    .as_ref()
+                    .map(|(t, w)| (t.as_str(), *w)),
+                app.supports_keyboard_enhancement,
+            );
+            *comment_cursor_logical_line = Some(*line_idx + cursor.line_offset);
+            *comment_cursor_column = 1 + cursor.column;
+            *comment_input_box_range = Some((*line_idx, *line_idx + input.len().saturating_sub(1)));
+            *comment_input_annotation_offset = Some((*line_idx, input.len(), 3));
+            for mut row in input {
+                row.spans.insert(
+                    0,
+                    Span::styled(
+                        cursor_indicator(*line_idx, current_line_idx),
+                        styles::current_line_indicator_style(&app.theme),
+                    ),
+                );
+                lines.push(row);
+                *line_idx += 1;
+            }
         }
         push_comment_bar(
             comment_bars,
@@ -1806,6 +1889,35 @@ mod remote_comments_snapshot_tests {
             checked, 2,
             "expected both message body lines to render, got {checked}"
         );
+    }
+
+    #[test]
+    fn reply_input_renders_under_thread_with_matching_annotations() {
+        let mut app = make_pr_app();
+        app.forge_review_threads = vec![thread("t1", "alice", "question", 2, false, false)];
+        app.rebuild_annotations();
+        let row = app
+            .line_annotations
+            .iter()
+            .position(|a| matches!(a, crate::app::AnnotatedLine::RemoteThreadLine { .. }))
+            .unwrap();
+        app.diff_state.cursor_line = row;
+        assert!(app.enter_thread_reply_mode());
+        let body = body_text(&draw_unified_diff(&mut app));
+        assert!(
+            body.contains("question") && body.contains("Type your comment..."),
+            "{body}"
+        );
+        let (cursor_x, cursor_y) = app.comment_cursor_screen_pos.unwrap();
+        let inner = app.diff_inner_area.unwrap();
+        assert!(cursor_x >= inner.x && cursor_x < inner.x + inner.width);
+        assert!(cursor_y >= inner.y && cursor_y < inner.y + inner.height);
+        assert_eq!(app.line_annotations.len(), app.total_lines());
+        app.comment_buffer = "a\nsecond line".into();
+        let body = body_text(&draw_unified_diff(&mut app));
+        assert!(body.contains("second line"), "{body}");
+        app.exit_comment_mode();
+        assert_eq!(app.line_annotations.len(), app.total_lines());
     }
 
     #[test]

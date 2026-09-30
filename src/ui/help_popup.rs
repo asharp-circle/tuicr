@@ -523,7 +523,7 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
                 "  c         ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw("Add line comment"),
+            Span::raw("Add line comment; on GitHub thread, reply"),
         ]),
         Line::from(vec![
             Span::styled(

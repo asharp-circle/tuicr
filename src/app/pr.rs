@@ -61,6 +61,14 @@ impl App {
                 "PR changed while deleting a comment; refresh to verify the GitHub result",
             );
         }
+        if self.pr_reply_rx.take().is_some() {
+            self.set_warning(
+                "PR changed while posting a reply; refresh to verify the GitHub result",
+            );
+        }
+        self.reply_thread_id = None;
+        self.failed_thread_reply = None;
+        self.pending_thread_reply = None;
         self.pr_viewer_login = review_metadata.viewer_login.clone();
         // Latest known remote head — equal to the session head at open time;
         // refreshed by future `gh pr view` calls in PR 6.
@@ -1077,7 +1085,10 @@ impl App {
         details: &crate::forge::traits::PullRequestDetails,
         local_checkout: Option<std::path::PathBuf>,
     ) {
-        if self.pr_thread_resolution_rx.is_some() || self.pr_reaction_rx.is_some() {
+        if self.pr_thread_resolution_rx.is_some()
+            || self.pr_reaction_rx.is_some()
+            || self.pr_reply_rx.is_some()
+        {
             return;
         }
         // Keep the last known rows visible until the new snapshot arrives.
@@ -1157,6 +1168,7 @@ impl App {
                     return;
                 }
                 if self.pr_delete_rx.is_some()
+                    || self.pr_reply_rx.is_some()
                     || self.pr_thread_resolution_rx.is_some()
                     || self.pr_reaction_rx.is_some()
                 {

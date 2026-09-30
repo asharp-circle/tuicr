@@ -125,6 +125,7 @@ impl App {
                         &mut self.line_annotations,
                         thread_idx,
                         thread,
+                        self.reply_thread_id.as_deref(),
                     );
                 }
             }
@@ -311,6 +312,7 @@ impl App {
                                 &remote_index,
                                 self.diff_state.viewport_width,
                                 commit_set.as_ref(),
+                                self.reply_thread_id.as_deref(),
                             );
                         }
                         DiffViewMode::SideBySide => {
@@ -325,6 +327,7 @@ impl App {
                                 &remote_index,
                                 self.diff_state.viewport_width,
                                 commit_set.as_ref(),
+                                self.reply_thread_id.as_deref(),
                             );
                         }
                     }
@@ -472,12 +475,22 @@ impl App {
         annotations: &mut Vec<AnnotatedLine>,
         thread_idx: usize,
         thread: &crate::forge::remote_comments::RemoteReviewThread,
+        reply_thread_id: Option<&str>,
     ) {
         for comment_idx in crate::forge::remote_comments::thread_display_comment_indices(thread) {
             annotations.push(AnnotatedLine::RemoteThreadLine {
                 thread_idx,
                 comment_idx,
             });
+        }
+        if reply_thread_id == Some(thread.id.as_str()) {
+            annotations.extend(std::iter::repeat_n(
+                AnnotatedLine::RemoteThreadLine {
+                    thread_idx,
+                    comment_idx: thread.comments.len().saturating_sub(1),
+                },
+                3,
+            ));
         }
     }
 
@@ -488,6 +501,7 @@ impl App {
         path: &std::path::Path,
         line: u32,
         side: LineSide,
+        reply_thread_id: Option<&str>,
     ) {
         let Some(file_index) = index.by_file.get(path.to_string_lossy().as_ref()) else {
             return;
@@ -497,7 +511,12 @@ impl App {
         };
         for thread_idx in thread_indices {
             if let Some(thread) = threads.get(*thread_idx) {
-                Self::push_remote_thread_annotations(annotations, *thread_idx, thread);
+                Self::push_remote_thread_annotations(
+                    annotations,
+                    *thread_idx,
+                    thread,
+                    reply_thread_id,
+                );
             }
         }
     }
@@ -515,6 +534,7 @@ impl App {
         remote_index: &RemoteThreadIndex,
         viewport_width: usize,
         commit_set: Option<&std::collections::HashSet<String>>,
+        reply_thread_id: Option<&str>,
     ) {
         for (line_idx, diff_line) in lines.iter().enumerate() {
             annotations.push(AnnotatedLine::DiffLine {
@@ -543,6 +563,7 @@ impl App {
                     path,
                     old_ln,
                     LineSide::Old,
+                    reply_thread_id,
                 );
             }
 
@@ -564,6 +585,7 @@ impl App {
                     path,
                     new_ln,
                     LineSide::New,
+                    reply_thread_id,
                 );
             }
         }
@@ -582,6 +604,7 @@ impl App {
         remote_index: &RemoteThreadIndex,
         viewport_width: usize,
         commit_set: Option<&std::collections::HashSet<String>>,
+        reply_thread_id: Option<&str>,
     ) {
         let mut i = 0;
         while i < lines.len() {
@@ -615,6 +638,7 @@ impl App {
                             path,
                             new_ln,
                             LineSide::New,
+                            reply_thread_id,
                         );
                     }
 
@@ -681,6 +705,7 @@ impl App {
                                 path,
                                 old_ln,
                                 LineSide::Old,
+                                reply_thread_id,
                             );
                         }
                         Self::push_comments(
@@ -700,6 +725,7 @@ impl App {
                                 path,
                                 new_ln,
                                 LineSide::New,
+                                reply_thread_id,
                             );
                         }
                     }
@@ -733,6 +759,7 @@ impl App {
                             path,
                             new_ln,
                             LineSide::New,
+                            reply_thread_id,
                         );
                     }
 

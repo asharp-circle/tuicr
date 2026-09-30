@@ -453,6 +453,7 @@ fn main() -> anyhow::Result<()> {
         app.poll_pr_threads_events();
         app.poll_pr_submit_events();
         app.poll_pr_delete_events();
+        app.poll_pr_reply_events();
         app.poll_pr_thread_resolution_events();
         app.poll_pr_reaction_events();
         needs_redraw |= app.poll_editor_launches();
