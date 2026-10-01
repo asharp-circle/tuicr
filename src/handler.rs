@@ -885,7 +885,7 @@ fn dispatch_command(app: &mut App, kind: CommandKind) -> CommandAfterDispatch {
             CommandAfterDispatch::ExitCommandMode
         }
         CommandKind::Edit => {
-            app.queue_editor_for_focused_item();
+            app.queue_file_editor_for_focused_item();
             CommandAfterDispatch::ExitCommandMode
         }
         CommandKind::Export => {

@@ -32,6 +32,7 @@ impl App {
             return;
         };
         if self.pr_delete_rx.is_some()
+            || self.pr_edit_rx.is_some()
             || self.pr_reply_rx.is_some()
             || self.pending_comment_rx.is_some()
             || !self.pending_comment_queue.is_empty()
@@ -300,6 +301,7 @@ impl App {
             ));
         };
         if self.pr_delete_rx.is_some()
+            || self.pr_edit_rx.is_some()
             || self.pr_reply_rx.is_some()
             || self.pending_comment_rx.is_some()
             || !self.pending_comment_queue.is_empty()

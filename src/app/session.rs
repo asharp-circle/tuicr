@@ -218,6 +218,7 @@ impl App {
             || self.pending_comment_rx.is_some()
             || !self.pending_comment_queue.is_empty()
             || self.pr_delete_rx.is_some()
+            || self.pr_edit_rx.is_some()
             || self.pr_reply_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
             || self.pr_reaction_rx.is_some()

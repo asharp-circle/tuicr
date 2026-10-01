@@ -117,6 +117,13 @@ impl App {
     /// event loop can perform the terminal handoff.
     /// Invalid focus states are reported through the status bar instead.
     pub fn queue_editor_for_focused_item(&mut self) {
+        if self.focused_panel == FocusedPanel::Diff && self.queue_editor_for_comment_at_cursor() {
+            return;
+        }
+        self.queue_file_editor_for_focused_item();
+    }
+
+    pub fn queue_file_editor_for_focused_item(&mut self) {
         match self.focused_panel {
             FocusedPanel::FileList => match self.get_selected_tree_item() {
                 Some(FileTreeItem::File { file_idx, .. }) => {
