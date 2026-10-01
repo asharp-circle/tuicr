@@ -144,16 +144,22 @@ Inline comment boxes and comment navigator rows label local drafts **pending**, 
 | `+` | Open the GitHub reaction picker on a displayed review thread comment or reply under the diff cursor. `j`/`k` select, Enter toggles your reaction, Esc cancels. Counts and your reactions (`*`) appear inline. |
 | `i` | Edit comment at cursor (vim: text cursor at start) |
 | `A` | Edit comment at cursor with text cursor at end (vim mode only) |
-| `e` | Open focused file in `$EDITOR` |
+| `e` | Edit a local draft or your GitHub inline comment at the diff cursor in `$EDITOR`; otherwise open the focused file |
 | `y` | Copy review to clipboard |
 | `Y` | Copy the comment at cursor to clipboard |
 
-`e` opens the file at the cursor's line. Terminal editors (`vim`, `nvim`, `nano`, …)
-take over the screen and tuicr reloads the diff once they exit. Windowed editors
-(`code`, `cursor`, `zed`, `subl`, …) open in their own window while tuicr stays on
-screen; reload with `:e` after editing. Adding `--wait` to the editor command opts a
-windowed editor back into the blocking behaviour. Set the `editor` config key to
-override `$EDITOR`.
+On a comment row in the diff, `e` edits the comment body in a temporary file and saves
+changes on editor exit. GitHub comments authored by another user cannot be edited;
+local drafts are saved in the session, and your pending or published GitHub inline
+comments are updated remotely. Elsewhere, `e` opens the file at the cursor's line.
+For files, terminal editors (`vim`, `nvim`, `nano`, …) take over the screen and
+tuicr reloads the diff once they exit. Windowed editors (`code`, `cursor`,
+`zed`, `subl`, …) open in their own window; reload file changes with `:e`.
+Adding `--wait` to the editor command opts a windowed editor into blocking.
+Comment editing automatically adds `--wait` for `code`, `cursor`, `codium`,
+`windsurf`, `zed`, `subl`, and `mate` (including recognized variants).
+Other windowed editors require a waiting command; set `editor = "code -w"`
+in `config.toml` to override `$EDITOR`.
 
 In PR review `e` opens the revision under review, not whatever the checkout
 happens to hold. When the local file *is* that revision you get the real file and

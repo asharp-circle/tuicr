@@ -586,7 +586,7 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
                 "  e         ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw("Open focused file in editor config / $EDITOR"),
+            Span::raw("Edit comment at cursor, else open file in $EDITOR"),
         ]),
         Line::from(vec![
             Span::styled(

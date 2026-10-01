@@ -321,7 +321,7 @@ A first-session cheatsheet. Press `?` inside tuicr for the full reference.
 | `v` / `V` | Visual mode (range comment) |
 | `r` | Toggle file reviewed |
 | `R` | Toggle hunk reviewed |
-| `e` | Open focused file in `$EDITOR` (in PR review: the PR's revision, as a read-only copy when the checkout differs) |
+| `e` | Edit the comment at the diff cursor in `$EDITOR` (local draft or your GitHub inline comment); otherwise open the focused file (in PR review: the reviewed revision) |
 | `y` | Copy review to clipboard |
 | `:edit` | Open focused file in `$EDITOR` |
 | `:submit` | Push review to GitHub, GitLab, Gitea, Bitbucket, Azure DevOps, or Gerrit |

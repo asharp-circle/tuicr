@@ -607,6 +607,12 @@ pub trait ForgeBackend {
             "Replying to review threads is not supported by this forge".into(),
         ))
     }
+    /// Update a viewer-owned remote inline comment by forge ID.
+    fn update_review_comment(&self, _repo: &ForgeRepository, _id: &str, _body: &str) -> Result<()> {
+        Err(TuicrError::UnsupportedOperation(
+            "Editing remote comments is not supported by this forge".into(),
+        ))
+    }
     /// Delete a viewer-owned remote inline comment by forge ID.
     fn delete_review_comment(&self, _repo: &ForgeRepository, _id: &str) -> Result<()> {
         Err(TuicrError::UnsupportedOperation(

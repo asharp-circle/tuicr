@@ -1666,6 +1666,184 @@ fn should_apply_successful_remote_delete_and_ignore_stale_pr_result() {
 }
 
 #[test]
+fn external_editor_updates_local_draft_and_ignores_unchanged_content() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.focused_panel = FocusedPanel::Diff;
+    let mut comment = line_comment(LineSide::New, Some(11), None);
+    comment.content = "initial body".into();
+    add_line_comment(&mut app, "src/lib.rs", 11, comment);
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::LineComment { .. }))
+        .unwrap();
+    app.queue_editor_for_focused_item();
+    let target = app.take_pending_editor_target().unwrap();
+    let pending = app.take_pending_comment_editor().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&target.path).unwrap(),
+        "initial body"
+    );
+    app.finish_comment_editor(pending);
+    assert_eq!(
+        app.session.files[&PathBuf::from("src/lib.rs")].line_comments[&11][0].content,
+        "initial body"
+    );
+    app.queue_editor_for_focused_item();
+    let pending = app.take_pending_comment_editor().unwrap();
+    std::fs::write(pending.file.path(), "initial body\n").unwrap();
+    app.finish_comment_editor(pending);
+    assert_eq!(
+        app.session.files[&PathBuf::from("src/lib.rs")].line_comments[&11][0].content,
+        "initial body"
+    );
+    app.take_pending_editor_target();
+    app.queue_editor_for_focused_item();
+    let pending = app.take_pending_comment_editor().unwrap();
+    std::fs::write(pending.file.path(), "updated body\n").unwrap();
+    app.finish_comment_editor(pending);
+    assert_eq!(
+        app.session.files[&PathBuf::from("src/lib.rs")].line_comments[&11][0].content,
+        "updated body\n"
+    );
+    app.take_pending_editor_target();
+    app.queue_editor_for_focused_item();
+    let pending = app.take_pending_comment_editor().unwrap();
+    std::fs::write(pending.file.path(), " \n").unwrap();
+    app.finish_comment_editor(pending);
+    assert_eq!(
+        app.session.files[&PathBuf::from("src/lib.rs")].line_comments[&11][0].content,
+        "updated body\n"
+    );
+}
+
+#[test]
+fn external_editor_handles_review_and_file_drafts_and_preserves_locked_comments() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.focused_panel = FocusedPanel::Diff;
+    app.session
+        .review_comments
+        .push(Comment::new("review body".into(), CommentType::None, None));
+    let path = PathBuf::from("src/lib.rs");
+    app.session
+        .files
+        .get_mut(&path)
+        .unwrap()
+        .file_comments
+        .push(Comment::new("file body".into(), CommentType::None, None));
+    app.rebuild_annotations();
+    for (review, expected) in [(true, "review updated"), (false, "file updated")] {
+        app.diff_state.cursor_line = app
+            .line_annotations
+            .iter()
+            .position(|annotation| {
+                if review {
+                    matches!(annotation, AnnotatedLine::ReviewComment { .. })
+                } else {
+                    matches!(annotation, AnnotatedLine::FileComment { .. })
+                }
+            })
+            .unwrap();
+        app.queue_editor_for_focused_item();
+        let pending = app.take_pending_comment_editor().unwrap();
+        app.take_pending_editor_target();
+        std::fs::write(pending.file.path(), expected).unwrap();
+        app.finish_comment_editor(pending);
+    }
+    assert_eq!(app.session.review_comments[0].content, "review updated");
+    assert_eq!(
+        app.session.files[&path].file_comments[0].content,
+        "file updated"
+    );
+    app.session.files.get_mut(&path).unwrap().file_comments[0].lifecycle_state =
+        CommentLifecycleState::PushedDraft;
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::FileComment { .. }))
+        .unwrap();
+    app.queue_editor_for_focused_item();
+    assert!(app.take_pending_comment_editor().is_none());
+}
+
+#[test]
+fn external_editor_remote_comment_enforces_ownership_and_handles_completion() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.focused_panel = FocusedPanel::Diff;
+    app.pr_viewer_login = Some("alice".into());
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    app.diff_state.cursor_line = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::RemoteThreadLine { comment_idx: 1, .. }))
+        .unwrap();
+    app.queue_editor_for_focused_item();
+    let pending = app.take_pending_comment_editor().unwrap();
+    assert_eq!(pending.original, "reply");
+    assert_eq!(app.take_pending_editor_target().unwrap().label, "comment");
+    app.forge_review_threads[0].comments[1].author = Some("bob".into());
+    app.queue_editor_for_focused_item();
+    assert!(app.take_pending_comment_editor().is_none());
+    app.forge_review_threads[0].comments[1].author = Some("alice".into());
+    let DiffSource::PullRequest(pr) = &app.diff_source else {
+        panic!("expected PR")
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.pr_edit_rx = Some(rx);
+    tx.send(crate::app::comment_editor::PrEditEvent {
+        repository: pr.key.repository.clone(),
+        number: pr.key.number,
+        head_sha: pr.key.head_sha.clone(),
+        viewer: "alice".into(),
+        id: "PRRC_1".into(),
+        body: "changed".into(),
+        result: Ok(()),
+    })
+    .unwrap();
+    app.poll_pr_edit_events();
+    assert_eq!(app.forge_review_threads[0].comments[1].body, "changed");
+    assert!(
+        app.line_annotations
+            .iter()
+            .any(|a| matches!(a, AnnotatedLine::RemoteThreadLine { comment_idx: 1, .. }))
+    );
+}
+
+#[test]
+fn external_editor_ignores_stale_or_failed_remote_updates() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.pr_viewer_login = Some("alice".into());
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.rebuild_annotations();
+    let DiffSource::PullRequest(pr) = &app.diff_source else {
+        panic!("expected PR")
+    };
+    let key = pr.key.clone();
+    for (head_sha, result) in [
+        ("stale", Ok(())),
+        (key.head_sha.as_str(), Err("denied".into())),
+    ] {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.pr_edit_rx = Some(rx);
+        tx.send(crate::app::comment_editor::PrEditEvent {
+            repository: key.repository.clone(),
+            number: key.number,
+            head_sha: head_sha.into(),
+            viewer: "alice".into(),
+            id: "PRRC_0".into(),
+            body: "unwanted".into(),
+            result,
+        })
+        .unwrap();
+        app.poll_pr_edit_events();
+        assert_eq!(app.forge_review_threads[0].comments[0].body, "root");
+    }
+}
+
+#[test]
 fn should_yank_only_the_comment_under_the_cursor() {
     // given two line comments in the same file, `Y` on the second one
     // resolves to that comment's content and not the first.

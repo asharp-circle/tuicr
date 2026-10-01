@@ -595,6 +595,39 @@ where
         })
     }
 
+    fn update_review_comment(&self, repo: &ForgeRepository, id: &str, body: &str) -> Result<()> {
+        let mut args = vec!["api".to_string(), "graphql".to_string()];
+        let payload = serde_json::json!({"query": "mutation($id: ID!, $body: String!) { updatePullRequestReviewComment(input: {pullRequestReviewCommentId: $id, body: $body}) { pullRequestReviewComment { id body } } }", "variables": {"id": id, "body": body}});
+        if repo.host != DEFAULT_GITHUB_HOST {
+            args.extend(["--hostname".to_string(), repo.host.clone()]);
+        }
+        args.extend(["--input".to_string(), "-".to_string()]);
+        let output = self
+            .runner
+            .run_with_stdin(&args, &payload.to_string())
+            .map_err(|err| map_gh_error(err, &repo.host))?;
+        let response: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(errors) = response.get("errors") {
+            return Err(TuicrError::Forge(format!(
+                "GitHub comment update failed: {errors}"
+            )));
+        }
+        if response
+            .pointer("/data/updatePullRequestReviewComment/pullRequestReviewComment/id")
+            .and_then(|v| v.as_str())
+            != Some(id)
+            || response
+                .pointer("/data/updatePullRequestReviewComment/pullRequestReviewComment/body")
+                .and_then(|v| v.as_str())
+                != Some(body)
+        {
+            return Err(TuicrError::Forge(
+                "GitHub did not confirm comment update".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn delete_review_comment(&self, repo: &ForgeRepository, id: &str) -> Result<()> {
         let mut args = vec!["api".to_string(), "graphql".to_string(),
             "-f".to_string(), "query=mutation($id: ID!) { deletePullRequestReviewComment(input: {id: $id}) { clientMutationId } }".to_string(),
@@ -1946,6 +1979,62 @@ index 1111111..2222222 100644
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn updates_review_comment_with_stdin_variables_and_checks_confirmation() {
+        struct Runner(std::cell::RefCell<Vec<(Vec<String>, String)>>, &'static str);
+        impl GhCommandRunner for Runner {
+            fn run(&self, _: &[String]) -> GhCommandResult<String> {
+                panic!("must use stdin")
+            }
+            fn run_with_stdin(&self, args: &[String], stdin: &str) -> GhCommandResult<String> {
+                self.0.borrow_mut().push((args.to_vec(), stdin.to_string()));
+                Ok(self.1.to_string())
+            }
+        }
+        let repo = ForgeRepository::github("github.example.com", "owner", "repo");
+        let runner = Runner(
+            Default::default(),
+            r#"{"data":{"updatePullRequestReviewComment":{"pullRequestReviewComment":{"id":"PRRC_1","body":"updated\nbody"}}}}"#,
+        );
+        let backend = GitHubGhBackend::with_runner(None, runner);
+        backend
+            .update_review_comment(&repo, "PRRC_1", "updated\nbody")
+            .unwrap();
+        let calls = backend.runner.0.borrow();
+        let (args, stdin) = &calls[0];
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--hostname", "github.example.com"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--input", "-"]));
+        assert!(!args.iter().any(|arg| arg.contains("updated")));
+        let payload: serde_json::Value = serde_json::from_str(stdin).unwrap();
+        assert_eq!(payload["variables"]["id"], "PRRC_1");
+        assert_eq!(payload["variables"]["body"], "updated\nbody");
+        drop(calls);
+        let backend = GitHubGhBackend::with_runner(
+            None,
+            Runner(Default::default(), r#"{"errors":[{"message":"denied"}]}"#),
+        );
+        assert!(
+            backend
+                .update_review_comment(&repo, "PRRC_1", "updated")
+                .is_err()
+        );
+        let backend = GitHubGhBackend::with_runner(
+            None,
+            Runner(
+                Default::default(),
+                r#"{"data":{"updatePullRequestReviewComment":null}}"#,
+            ),
+        );
+        assert!(
+            backend
+                .update_review_comment(&repo, "PRRC_1", "updated")
+                .is_err()
+        );
     }
 
     #[test]

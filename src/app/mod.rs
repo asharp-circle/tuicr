@@ -1194,10 +1194,13 @@ pub struct App {
     pub diff_files: Vec<DiffFile>,
     pub diff_source: DiffSource,
     pub pending_editor_target: Option<EditorTarget>,
+    pub pending_comment_editor: Option<comment_editor::PendingCommentEditor>,
+    pub(crate) pr_edit_rx: Option<std::sync::mpsc::Receiver<comment_editor::PrEditEvent>>,
     pub editor_override: Option<String>,
     /// Windowed editors that have not exited yet; polled by
     /// `poll_editor_launches`.
     pub(crate) editor_launches: Vec<EditorLaunch>,
+    pub(crate) comment_editor_launches: Vec<(EditorLaunch, comment_editor::PendingCommentEditor)>,
 
     pub input_mode: InputMode,
     pub focused_panel: FocusedPanel,
@@ -1935,6 +1938,7 @@ impl AppStartupOptions<'_> {
 }
 
 mod annotations;
+mod comment_editor;
 mod comment_vim;
 mod comments;
 mod commits;

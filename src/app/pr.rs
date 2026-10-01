@@ -488,9 +488,12 @@ impl App {
         if self.pr_reload_state.is_some() {
             return Ok(()); // already in flight; the existing spinner is enough
         }
-        if self.pending_comment_rx.is_some() || !self.pending_comment_queue.is_empty() {
+        if self.pending_comment_rx.is_some()
+            || !self.pending_comment_queue.is_empty()
+            || self.pr_edit_rx.is_some()
+        {
             return Err(TuicrError::Forge(
-                "Wait for pending GitHub comments to finish before reloading".into(),
+                "Wait for the current GitHub comment operation before reloading".into(),
             ));
         }
 
@@ -1101,6 +1104,7 @@ impl App {
         local_checkout: Option<std::path::PathBuf>,
     ) {
         if self.pr_thread_resolution_rx.is_some()
+            || self.pr_edit_rx.is_some()
             || self.pr_reaction_rx.is_some()
             || self.pr_reply_rx.is_some()
         {
@@ -1192,6 +1196,7 @@ impl App {
                     return;
                 }
                 if self.pr_delete_rx.is_some()
+                    || self.pr_edit_rx.is_some()
                     || self.pr_reply_rx.is_some()
                     || self.pr_thread_resolution_rx.is_some()
                     || self.pr_reaction_rx.is_some()
@@ -1293,6 +1298,9 @@ impl App {
     /// from `:e` so users can pull the latest discussions without
     /// reopening the PR. No-op outside PR mode.
     pub fn refetch_pr_threads(&mut self) {
+        if self.pr_edit_rx.is_some() {
+            return;
+        }
         let local_checkout = self
             .forge_backend
             .as_deref()

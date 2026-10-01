@@ -454,10 +454,12 @@ fn main() -> anyhow::Result<()> {
         app.poll_pr_submit_events();
         app.poll_pending_comment_events();
         app.poll_pr_delete_events();
+        app.poll_pr_edit_events();
         app.poll_pr_reply_events();
         app.poll_pr_thread_resolution_events();
         app.poll_pr_reaction_events();
         needs_redraw |= app.poll_editor_launches();
+        needs_redraw |= app.poll_comment_editor_launches();
         needs_redraw |= app.poll_persisted_session_changes();
         needs_redraw |= app.poll_diff_watch_changes();
         needs_redraw |= pr_pending;
@@ -776,25 +778,45 @@ fn main() -> anyhow::Result<()> {
 
                     dispatch_action(&mut app, action);
                     if let Some(target) = app.take_pending_editor_target() {
+                        let comment_editor = app.take_pending_comment_editor();
+                        let editor_override = if comment_editor.is_some() {
+                            match comment_editor_command(app.editor_override.as_deref(), &target) {
+                                Ok(command) => Some(command),
+                                Err(message) => {
+                                    app.set_warning(message);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            app.editor_override.clone()
+                        };
                         match run_editor_from_tui(
                             &mut terminal,
                             &target,
-                            app.editor_override.as_deref(),
+                            editor_override.as_deref(),
                             app.output_to_stdout,
                         ) {
                             // The editor is still open, so there is nothing to
                             // pick up yet; the user reloads once they are done.
                             Ok(Ok(EditorOutcome::Detached(launch))) => {
-                                app.track_editor_launch(launch);
-                                let hint = if app.diff_source.includes_worktree_changes() {
-                                    " (:e to reload)"
+                                if let Some(pending) = comment_editor {
+                                    // Keep the temporary file alive until the windowed editor exits.
+                                    app.track_comment_editor_launch(launch, pending);
+                                    app.set_message("Editing comment in $EDITOR");
                                 } else {
-                                    ""
-                                };
-                                app.set_message(format!("Opened {}{hint}", target.label));
+                                    app.track_editor_launch(launch);
+                                    let hint = if app.diff_source.includes_worktree_changes() {
+                                        " (:e to reload)"
+                                    } else {
+                                        ""
+                                    };
+                                    app.set_message(format!("Opened {}{hint}", target.label));
+                                }
                             }
                             Ok(Ok(EditorOutcome::Finished)) => {
-                                if app.diff_source.includes_worktree_changes() {
+                                if let Some(pending) = comment_editor {
+                                    app.finish_comment_editor(pending);
+                                } else if app.diff_source.includes_worktree_changes() {
                                     match app.reload_diff_files() {
                                         Ok((count, invalidated)) => {
                                             let invalidated_suffix = if invalidated > 0 {
@@ -988,6 +1010,47 @@ enum EditorOutcome {
     Detached(EditorLaunch),
 }
 
+fn comment_editor_command(
+    editor_override: Option<&str>,
+    target: &EditorTarget,
+) -> Result<String, String> {
+    let editor = editor_override
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("EDITOR")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "vi".into());
+    let command = EditorCommand::from_editor(&editor, target);
+    if command.surface() == EditorSurface::Terminal {
+        return Ok(editor);
+    }
+    let program = std::path::Path::new(&command.program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(
+        program.as_str(),
+        "code"
+            | "code-insiders"
+            | "cursor"
+            | "codium"
+            | "windsurf"
+            | "zed"
+            | "subl"
+            | "sublime_text"
+            | "mate"
+    ) {
+        return Ok(format!("{editor} --wait"));
+    }
+    Err(format!(
+        "{program} cannot wait for a comment editor; configure an editor with --wait"
+    ))
+}
+
 fn run_editor_from_tui<W: Write>(
     terminal: &mut TerminalSession<W>,
     target: &EditorTarget,
@@ -1018,6 +1081,29 @@ fn run_editor_from_tui<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comment_editor_requires_wait_for_gui_editors() {
+        let target = EditorTarget {
+            path: std::path::PathBuf::from("/tmp/comment.md"),
+            line: None,
+            label: "comment".into(),
+        };
+        for editor in ["code", "cursor", "zed", "subl"] {
+            let editor = comment_editor_command(Some(editor), &target).unwrap();
+            assert!(editor.ends_with(" --wait"));
+            assert_eq!(
+                EditorCommand::from_editor(&editor, &target).surface(),
+                EditorSurface::Terminal
+            );
+        }
+        assert_eq!(
+            comment_editor_command(Some("code --wait"), &target).unwrap(),
+            "code --wait"
+        );
+        assert_eq!(comment_editor_command(Some("vim"), &target).unwrap(), "vim");
+        assert!(comment_editor_command(Some("idea"), &target).is_err());
+    }
 
     #[test]
     fn drain_blocks_once_then_takes_only_queued_events() {

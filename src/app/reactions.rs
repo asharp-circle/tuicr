@@ -4,6 +4,7 @@ use crate::forge::remote_comments::{GITHUB_REACTIONS, RemoteReviewComment};
 impl App {
     fn is_github_operation_busy(&self) -> bool {
         self.pr_reaction_rx.is_some()
+            || self.pr_edit_rx.is_some()
             || self.pr_threads_rx.is_some()
             || self.pr_delete_rx.is_some()
             || self.pr_reply_rx.is_some()

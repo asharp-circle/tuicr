@@ -583,7 +583,7 @@ impl App {
     }
 
     /// Find the comment at the current cursor position.
-    fn find_comment_at_cursor(&self) -> Option<CommentLocation> {
+    pub(super) fn find_comment_at_cursor(&self) -> Option<CommentLocation> {
         let target = self.diff_state.cursor_line;
         let commit_set = self.selected_commit_set();
         match self.line_annotations.get(target) {
@@ -690,6 +690,7 @@ impl App {
             return false;
         };
         if self.pr_reaction_rx.is_some()
+            || self.pr_edit_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
             || self.pr_reply_rx.is_some()
             || self.pr_delete_rx.is_some()
@@ -851,7 +852,7 @@ impl App {
             .map(|comment| comment.body.clone())
     }
 
-    fn local_comment_at(&self, location: &CommentLocation) -> Option<&Comment> {
+    pub(super) fn local_comment_at(&self, location: &CommentLocation) -> Option<&Comment> {
         match location {
             CommentLocation::Review { index } => self.session.review_comments.get(*index),
             CommentLocation::File { path, index } => {
@@ -874,7 +875,7 @@ impl App {
     }
 
     pub fn delete_comment_at_cursor(&mut self) -> bool {
-        if self.pr_delete_rx.is_some() || self.pr_reply_rx.is_some() {
+        if self.pr_delete_rx.is_some() || self.pr_edit_rx.is_some() || self.pr_reply_rx.is_some() {
             self.set_message("Wait for the current GitHub operation");
             return false;
         }
@@ -1092,6 +1093,7 @@ impl App {
             || self.pending_comment_rx.is_some()
             || !self.pending_comment_queue.is_empty()
             || self.pr_delete_rx.is_some()
+            || self.pr_edit_rx.is_some()
             || self.pr_reply_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
             || self.pr_reaction_rx.is_some()
@@ -1774,6 +1776,7 @@ impl App {
             return;
         }
         if self.pr_reply_rx.is_some()
+            || self.pr_edit_rx.is_some()
             || self.pr_threads_rx.is_some()
             || self.pr_submit_rx.is_some()
             || self.pending_comment_rx.is_some()
