@@ -161,6 +161,8 @@ fn deliver_matching_pr_threads_event(
         head_sha: pr_key.head_sha,
         threads,
         summaries,
+        viewer_has_pending_review: false,
+        epoch: app.pr_threads_epoch,
     })
     .unwrap();
 }
@@ -923,6 +925,15 @@ fn should_emit_success_message_with_review_id_and_counts_for_published_submit() 
     assert!(msg.content.contains("Submitted GitHub review #123456"));
     assert!(msg.content.contains("1 inline"));
     assert!(msg.content.contains("2 moved to summary"));
+}
+
+#[test]
+fn should_allow_submit_when_viewer_has_pending_review_even_without_local_drafts() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    assert!(app.session.review_comments.is_empty());
+    app.viewer_has_pending_review = true;
+    app.start_submit(SubmitEvent::Comment);
+    assert_eq!(app.input_mode, InputMode::SubmitConfirm);
 }
 
 #[test]
@@ -2415,4 +2426,64 @@ fn thread_reply_completion_updates_only_matching_pr_and_deduplicates_comment() {
     assert_eq!(app.line_annotations.len(), app.total_lines());
     deliver(&mut app, key.head_sha);
     assert_eq!(app.forge_review_threads[0].comments.len(), 3);
+}
+
+#[test]
+fn should_handle_disconnected_worker_in_poll_pending_comment_events() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    let (tx, rx) = std::sync::mpsc::channel::<crate::app::PendingCommentEvent>();
+    drop(tx);
+    app.pending_comment_rx = Some(rx);
+    app.poll_pending_comment_events();
+    assert!(app.pending_comment_rx.is_none());
+    let err = app.message.as_ref().expect("error message");
+    assert_eq!(err.message_type, MessageType::Error);
+    assert!(err.content.contains("terminated unexpectedly"));
+}
+
+#[test]
+fn should_prevent_clearing_comments_when_pending_comment_is_in_flight() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    let comment = line_comment(LineSide::New, Some(11), None);
+    add_line_comment(&mut app, "src/lib.rs", 11, comment);
+    let (_tx, rx) = std::sync::mpsc::channel();
+    app.pending_comment_rx = Some(rx);
+    app.clear_comments(crate::model::ClearScope::CommentsOnly);
+    let warn = app.message.as_ref().expect("warning message");
+    assert_eq!(warn.message_type, MessageType::Warning);
+    assert!(warn.content.contains("Wait for pending GitHub comments"));
+    assert_eq!(
+        app.session
+            .files
+            .get(std::path::Path::new("src/lib.rs"))
+            .unwrap()
+            .line_comments
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn should_not_overwrite_viewer_has_pending_review_from_stale_threads_fetch() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.viewer_has_pending_review = true;
+    app.pr_threads_epoch = 5;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.pr_threads_rx = Some(rx);
+    let pr_key = match &app.diff_source {
+        DiffSource::PullRequest(pr) => pr.key.clone(),
+        _ => panic!("expected PR mode"),
+    };
+    tx.send(PrThreadsEvent::Done {
+        repository: pr_key.repository,
+        pr_number: pr_key.number,
+        head_sha: pr_key.head_sha,
+        threads: Ok(Vec::new()),
+        summaries: Ok(Vec::new()),
+        viewer_has_pending_review: false,
+        epoch: 4,
+    })
+    .unwrap();
+    app.poll_pr_threads_events();
+    assert!(app.viewer_has_pending_review);
 }
