@@ -669,6 +669,34 @@ pub trait ForgeBackend {
         pr: &PullRequestDetails,
         request: CreateReviewRequest<'_>,
     ) -> Result<GhCreateReviewResponse>;
+
+    fn submit_pending_review(
+        &self,
+        _repository: &ForgeRepository,
+        _number: u64,
+        _event: SubmitEvent,
+        _commit_id: &str,
+        _body: &str,
+        _comments: &[crate::forge::submit::InlineComment],
+    ) -> Result<Option<GhCreateReviewResponse>> {
+        Ok(None)
+    }
+
+    fn has_pending_review(&self, _repository: &ForgeRepository, _number: u64) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn add_pending_comment(
+        &self,
+        _repository: &ForgeRepository,
+        _number: u64,
+        _commit_id: &str,
+        _comment: &crate::forge::submit::InlineComment,
+    ) -> Result<u64> {
+        Err(TuicrError::UnsupportedOperation(
+            "Pending review comments are not supported by this forge".into(),
+        ))
+    }
 }
 
 #[cfg(test)]

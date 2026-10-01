@@ -452,6 +452,7 @@ fn main() -> anyhow::Result<()> {
         app.poll_pr_range_reload_events();
         app.poll_pr_threads_events();
         app.poll_pr_submit_events();
+        app.poll_pending_comment_events();
         app.poll_pr_delete_events();
         app.poll_pr_reply_events();
         app.poll_pr_thread_resolution_events();

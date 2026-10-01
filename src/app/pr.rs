@@ -69,6 +69,9 @@ impl App {
         self.reply_thread_id = None;
         self.failed_thread_reply = None;
         self.pending_thread_reply = None;
+        self.viewer_has_pending_review = false;
+        self.pending_comment_rx = None;
+        self.pending_comment_queue.clear();
         self.pr_viewer_login = review_metadata.viewer_login.clone();
         // Latest known remote head — equal to the session head at open time;
         // refreshed by future `gh pr view` calls in PR 6.
@@ -484,6 +487,11 @@ impl App {
         };
         if self.pr_reload_state.is_some() {
             return Ok(()); // already in flight; the existing spinner is enough
+        }
+        if self.pending_comment_rx.is_some() || !self.pending_comment_queue.is_empty() {
+            return Err(TuicrError::Forge(
+                "Wait for pending GitHub comments to finish before reloading".into(),
+            ));
         }
 
         let restore_overview_cursor = (self.diff_state.cursor_line
@@ -943,6 +951,13 @@ impl App {
         use crate::forge::pr_open::fetch_pr_data;
         use crate::forge::traits::PullRequestTarget;
 
+        if self.pending_comment_rx.is_some() || !self.pending_comment_queue.is_empty() {
+            self.set_warning(
+                "Wait for pending GitHub comments to finish before opening another PR",
+            );
+            return;
+        }
+
         let request = PrOpenRequest {
             repository: repository.clone(),
             pr_number: number,
@@ -1103,6 +1118,8 @@ impl App {
         let head_sha = details.head_sha.clone();
         let show_pr_checks = self.show_pr_checks;
         let show_pr_comments = self.show_pr_comments;
+        self.pr_threads_epoch += 1;
+        let epoch = self.pr_threads_epoch;
 
         std::thread::spawn(move || {
             let backend = create_forge_backend(
@@ -1117,12 +1134,17 @@ impl App {
             let summaries = backend
                 .list_review_summaries(&details_clone)
                 .map_err(|e| e.to_string());
+            let viewer_has_pending_review = backend
+                .has_pending_review(&repository, pr_number)
+                .unwrap_or(false);
             let _ = tx.send(PrThreadsEvent::Done {
                 repository,
                 pr_number,
                 head_sha,
                 threads,
                 summaries,
+                viewer_has_pending_review,
+                epoch,
             });
         });
     }
@@ -1148,6 +1170,8 @@ impl App {
                 head_sha,
                 threads,
                 summaries,
+                viewer_has_pending_review,
+                epoch,
             } => {
                 // Validate against the currently open PR. If the user has
                 // opened a different PR (or left PR mode) while the fetch
@@ -1203,7 +1227,22 @@ impl App {
                         }
                     }
                 }
-                if !had_error {
+                let is_stale = epoch < self.pr_threads_epoch;
+                if !is_stale {
+                    if viewer_has_pending_review {
+                        self.viewer_has_pending_review = true;
+                    } else if self.pending_comment_rx.is_none()
+                        && self.pending_comment_queue.is_empty()
+                        && !self.has_pushed_draft_comments()
+                    {
+                        self.viewer_has_pending_review = false;
+                    }
+                }
+                if !had_error
+                    && !is_stale
+                    && self.pending_comment_rx.is_none()
+                    && self.pending_comment_queue.is_empty()
+                {
                     self.prune_locked_comments();
                     let _ = self.save_current_session_merging_external();
                 }

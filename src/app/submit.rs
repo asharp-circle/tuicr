@@ -31,7 +31,11 @@ impl App {
             self.set_warning(":submit only applies in PR mode");
             return;
         };
-        if self.pr_delete_rx.is_some() || self.pr_reply_rx.is_some() {
+        if self.pr_delete_rx.is_some()
+            || self.pr_reply_rx.is_some()
+            || self.pending_comment_rx.is_some()
+            || !self.pending_comment_queue.is_empty()
+        {
             self.set_warning("Wait for the current GitHub operation before submitting a review");
             return;
         }
@@ -120,7 +124,13 @@ impl App {
         // draft comment or a review-level comment, otherwise there's
         // nothing to submit.
         let bare_allowed = matches!(event, crate::forge::submit::SubmitEvent::Approve);
-        if !bare_allowed && total_local_drafts == 0 && self.session.review_comments.is_empty() {
+        let has_pushed_drafts = pr.key.repository.kind == crate::forge::traits::ForgeKind::GitHub
+            && (self.viewer_has_pending_review || self.has_pushed_draft_comments());
+        if !bare_allowed
+            && !has_pushed_drafts
+            && total_local_drafts == 0
+            && self.session.review_comments.is_empty()
+        {
             self.set_warning("Nothing to submit — no local-draft comments");
             return;
         }
@@ -289,7 +299,11 @@ impl App {
                 "Not in PR mode".to_string(),
             ));
         };
-        if self.pr_delete_rx.is_some() || self.pr_reply_rx.is_some() {
+        if self.pr_delete_rx.is_some()
+            || self.pr_reply_rx.is_some()
+            || self.pending_comment_rx.is_some()
+            || !self.pending_comment_queue.is_empty()
+        {
             return Err(TuicrError::Forge(
                 "Wait for the current GitHub operation before submitting".into(),
             ));
@@ -381,17 +395,47 @@ impl App {
                 pr_number.to_string(),
             );
             let result = match backend.get_pull_request(target) {
-                Ok(details) => backend
-                    .create_review(
-                        &details,
-                        CreateReviewRequest {
+                Ok(details) => {
+                    let pending = if repository.kind == crate::forge::traits::ForgeKind::GitHub {
+                        backend.submit_pending_review(
+                            &repository,
+                            pr_number,
                             event,
-                            commit_id: &commit_id,
-                            body: &body,
-                            comments: &mappable,
-                        },
-                    )
-                    .map_err(|e| e.to_string()),
+                            &commit_id,
+                            &body,
+                            &mappable,
+                        )
+                    } else {
+                        Ok(None)
+                    };
+                    match pending {
+                        Ok(Some(response)) => Ok(response),
+                        Ok(None) => {
+                            let bare_allowed =
+                                matches!(event, crate::forge::submit::SubmitEvent::Approve);
+                            if !bare_allowed && mappable.is_empty() && body.is_empty() {
+                                Err(TuicrError::Forge(
+                                    "No pending review found on GitHub and no comments to submit"
+                                        .into(),
+                                )
+                                .to_string())
+                            } else {
+                                backend
+                                    .create_review(
+                                        &details,
+                                        CreateReviewRequest {
+                                            event,
+                                            commit_id: &commit_id,
+                                            body: &body,
+                                            comments: &mappable,
+                                        },
+                                    )
+                                    .map_err(|e| e.to_string())
+                            }
+                        }
+                        Err(error) => Err(error.to_string()),
+                    }
+                }
                 Err(e) => Err(e.to_string()),
             };
             let _ = tx.send(PrSubmitEvent::Done {
@@ -479,6 +523,26 @@ impl App {
         };
 
         self.apply_submit_success(&in_flight, &response);
+        if in_flight.repository.kind == crate::forge::traits::ForgeKind::GitHub
+            && in_flight.event != SubmitEvent::Draft
+        {
+            self.viewer_has_pending_review = false;
+            for review in self.session.files.values_mut() {
+                for comment in review
+                    .file_comments
+                    .iter_mut()
+                    .chain(review.line_comments.values_mut().flatten())
+                {
+                    if comment.lifecycle_state
+                        == crate::model::comment::CommentLifecycleState::PushedDraft
+                        && comment.remote_review_id.as_deref() == Some(&response.id.to_string())
+                    {
+                        comment.lifecycle_state =
+                            crate::model::comment::CommentLifecycleState::Submitted;
+                    }
+                }
+            }
+        }
 
         // Post-submit save — captures the lifecycle transitions.
         let _ = self.save_current_session_merging_external();
@@ -571,6 +635,19 @@ impl App {
             }
         }
         self.rebuild_annotations();
+    }
+
+    pub(crate) fn has_pushed_draft_comments(&self) -> bool {
+        self.session.files.values().any(|review| {
+            review
+                .file_comments
+                .iter()
+                .chain(review.line_comments.values().flatten())
+                .any(|comment| {
+                    comment.lifecycle_state
+                        == crate::model::comment::CommentLifecycleState::PushedDraft
+                })
+        })
     }
 
     /// Drop locked (`Submitted`/`PushedDraft`) comments from the session.

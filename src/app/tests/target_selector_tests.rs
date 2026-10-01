@@ -2843,6 +2843,8 @@ fn should_apply_remote_threads_event_when_relevant() {
             sample_thread(2, "duplicate", false, false),
         ]),
         summaries: Ok(Vec::new()),
+        viewer_has_pending_review: false,
+        epoch: app.pr_threads_epoch,
     })
     .unwrap();
     // when
@@ -2874,6 +2876,8 @@ fn should_discard_stale_remote_threads_event_after_switching_pr() {
         head_sha: "definitely-not-this".into(), // wrong head
         threads: Ok(vec![sample_thread(2, "stale", false, false)]),
         summaries: Ok(Vec::new()),
+        viewer_has_pending_review: false,
+        epoch: app.pr_threads_epoch,
     })
     .unwrap();
     // when

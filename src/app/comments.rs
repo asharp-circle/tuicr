@@ -878,7 +878,10 @@ impl App {
             self.set_message("Wait for the current GitHub operation");
             return false;
         }
-        if self.pr_submit_rx.is_some() {
+        if self.pr_submit_rx.is_some()
+            || self.pending_comment_rx.is_some()
+            || !self.pending_comment_queue.is_empty()
+        {
             self.set_warning("Wait for the review submission before deleting a comment");
             return false;
         }
@@ -1086,6 +1089,8 @@ impl App {
             return false;
         };
         if self.pr_submit_rx.is_some()
+            || self.pending_comment_rx.is_some()
+            || !self.pending_comment_queue.is_empty()
             || self.pr_delete_rx.is_some()
             || self.pr_reply_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
@@ -1202,6 +1207,10 @@ impl App {
     }
 
     pub fn clear_comments(&mut self, scope: ClearScope) {
+        if self.pending_comment_rx.is_some() || !self.pending_comment_queue.is_empty() {
+            self.set_warning("Wait for pending GitHub comments to finish before clearing");
+            return;
+        }
         let (cleared, unreviewed) = self.session.clear_comments(scope);
         if cleared == 0 && unreviewed == 0 {
             self.set_message("No comments to clear");
@@ -1321,6 +1330,10 @@ impl App {
     /// line (vim `A` / the default non-vim behavior); otherwise at its start
     /// (vim `i`). Returns true if a comment was found and edit mode entered.
     pub fn enter_edit_mode(&mut self, cursor_at_end: bool) -> bool {
+        if self.pending_comment_rx.is_some() || !self.pending_comment_queue.is_empty() {
+            self.set_warning("Wait for the GitHub comment to finish before editing");
+            return false;
+        }
         let location = self.find_comment_at_cursor();
         // First annotation row of the comment under the cursor, so we can place
         // the text cursor on the line the diff cursor is actually pointing at.
@@ -1491,6 +1504,8 @@ impl App {
 
         let mut message = "Error: Could not save comment".to_string();
         let mut autosave_error = None;
+        let mut new_comment = None;
+        let mut new_target = None;
 
         // Check if we're editing an existing comment
         if let Some(editing_id) = &self.editing_comment_id {
@@ -1581,8 +1596,12 @@ impl App {
                 author: self.username.clone(),
                 commit_id: self.commit_id_for_new_comment(),
             };
+            new_target = Some(request.target.clone());
             message = match add_comment_to_session(&mut self.session, request) {
-                Ok(_) => success_message,
+                Ok(comment) => {
+                    new_comment = Some(comment);
+                    success_message
+                }
                 Err(e) => format!("Error: Could not save comment: {e}"),
             };
         }
@@ -1599,8 +1618,150 @@ impl App {
             self.set_message(message);
         }
         self.rebuild_annotations();
+        if let (Some(comment), Some(target)) = (new_comment, new_target) {
+            self.start_pending_comment(comment, target);
+        }
 
         self.exit_comment_mode();
+    }
+
+    fn start_pending_comment(&mut self, comment: Comment, target: CommentTarget) {
+        use crate::forge::submit::{CommentAnchor, MappedComment, SubmitContext, map_comment};
+        use crate::forge::traits::ForgeKind;
+        let DiffSource::PullRequest(pr) = &self.diff_source else {
+            return;
+        };
+        if pr.key.repository.kind != ForgeKind::GitHub || pr.is_read_only() {
+            return;
+        }
+        let path = match &target {
+            CommentTarget::File { path }
+            | CommentTarget::Line { path, .. }
+            | CommentTarget::LineRange { path, .. } => path,
+            CommentTarget::Review => return,
+        };
+        let files = self.range_diff_files.as_ref().unwrap_or(&self.diff_files);
+        let Some(file) = files.iter().find(|file| file.display_path() == path) else {
+            return;
+        };
+        let anchor = match target {
+            CommentTarget::File { .. } => CommentAnchor::FileLevel,
+            CommentTarget::Line { line, side, .. } => CommentAnchor::Line { line, side },
+            CommentTarget::LineRange { .. } => CommentAnchor::Range,
+            CommentTarget::Review => return,
+        };
+        let MappedComment::Inline(inline) = map_comment(
+            &comment,
+            anchor,
+            file,
+            SubmitContext::new(&self.forge_config, &self.comment_types),
+        ) else {
+            self.set_warning("Comment saved locally; it cannot be anchored on GitHub");
+            return;
+        };
+        if self.pr_submit_rx.is_some() {
+            self.set_warning("Comment saved locally; review submission is in progress");
+            return;
+        }
+        let key = pr.key.clone();
+        self.pr_threads_epoch += 1;
+        let commit_id = match self.commit_selection_range {
+            Some((start, end))
+                if start <= end
+                    && end < self.pr_commits.len()
+                    && !(start == 0 && end + 1 == self.pr_commits.len()) =>
+            {
+                self.pr_commits[start].oid.clone()
+            }
+            _ => key.head_sha.clone(),
+        };
+        let item = PendingCommentQueueItem {
+            key,
+            commit_id,
+            comment_id: comment.id.clone(),
+            inline,
+        };
+        if self.pending_comment_rx.is_some() {
+            self.pending_comment_queue.push_back(item);
+            self.set_message("Comment queued for pending GitHub review");
+        } else {
+            self.dispatch_pending_comment(item);
+        }
+    }
+
+    fn dispatch_pending_comment(&mut self, item: PendingCommentQueueItem) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pending_comment_rx = Some(rx);
+        std::thread::spawn(move || {
+            let backend = create_forge_backend(&item.key.repository, None, false, false);
+            let result = backend
+                .add_pending_comment(
+                    &item.key.repository,
+                    item.key.number,
+                    &item.commit_id,
+                    &item.inline,
+                )
+                .map_err(|error| error.to_string());
+            let _ = tx.send(PendingCommentEvent {
+                key: item.key,
+                comment_id: item.comment_id,
+                result,
+            });
+        });
+    }
+
+    pub fn poll_pending_comment_events(&mut self) {
+        let Some(rx) = self.pending_comment_rx.as_ref() else {
+            return;
+        };
+        let event = match rx.try_recv() {
+            Ok(event) => event,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_comment_rx = None;
+                self.set_error("GitHub comment worker terminated unexpectedly (saved locally)");
+                self.drain_next_pending_comment();
+                return;
+            }
+        };
+        self.pending_comment_rx = None;
+        if matches!(&self.diff_source, DiffSource::PullRequest(pr) if pr.key == event.key) {
+            match event.result {
+                Ok(review_id) => {
+                    self.viewer_has_pending_review = true;
+                    for review in self.session.files.values_mut() {
+                        for comment in review.file_comments.iter_mut().chain(
+                            review
+                                .line_comments
+                                .values_mut()
+                                .flat_map(|comments| comments.iter_mut()),
+                        ) {
+                            if comment.id == event.comment_id {
+                                comment.lifecycle_state =
+                                    crate::model::comment::CommentLifecycleState::PushedDraft;
+                                comment.remote_review_id = Some(review_id.to_string());
+                            }
+                        }
+                    }
+                    let _ = self.save_current_session_merging_external();
+                    self.rebuild_annotations();
+                    self.set_message("Comment added to pending GitHub review");
+                }
+                Err(error) => {
+                    self.set_error(format!("GitHub comment failed (saved locally): {error}"));
+                }
+            }
+        }
+        self.drain_next_pending_comment();
+    }
+
+    fn drain_next_pending_comment(&mut self) {
+        while let Some(next_item) = self.pending_comment_queue.pop_front() {
+            if matches!(&self.diff_source, DiffSource::PullRequest(pr) if pr.key == next_item.key) {
+                self.dispatch_pending_comment(next_item);
+                break;
+            }
+        }
     }
 
     fn start_thread_reply(&mut self, thread_id: String, body: String) {
@@ -1615,6 +1776,8 @@ impl App {
         if self.pr_reply_rx.is_some()
             || self.pr_threads_rx.is_some()
             || self.pr_submit_rx.is_some()
+            || self.pending_comment_rx.is_some()
+            || !self.pending_comment_queue.is_empty()
             || self.pr_delete_rx.is_some()
             || self.pr_thread_resolution_rx.is_some()
             || self.pr_reaction_rx.is_some()

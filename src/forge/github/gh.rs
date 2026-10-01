@@ -780,6 +780,359 @@ where
 
         parse_create_review_response(&output)
     }
+
+    fn has_pending_review(&self, repository: &ForgeRepository, number: u64) -> Result<bool> {
+        let endpoint = format!(
+            "repos/{}/{}/pulls/{number}/reviews",
+            repository.owner, repository.name
+        );
+        self.find_pending_review(repository, &endpoint)
+            .map(|id| id.is_some())
+    }
+
+    fn submit_pending_review(
+        &self,
+        repository: &ForgeRepository,
+        number: u64,
+        event: crate::forge::submit::SubmitEvent,
+        commit_id: &str,
+        body: &str,
+        comments: &[crate::forge::submit::InlineComment],
+    ) -> Result<Option<GhCreateReviewResponse>> {
+        let endpoint = format!(
+            "repos/{}/{}/pulls/{number}/reviews",
+            repository.owner, repository.name
+        );
+        let Some((id, rev_commit)) = self.find_pending_review(repository, &endpoint)? else {
+            return Ok(None);
+        };
+        if !rev_commit.is_empty()
+            && !commit_id.is_empty()
+            && rev_commit != commit_id
+            && !comments.is_empty()
+        {
+            return Err(TuicrError::Forge(format!(
+                "Existing pending review is on commit {rev_commit}, but comments are on {commit_id}"
+            )));
+        }
+        let existing = self.list_pending_review_comments(repository, &endpoint, id)?;
+        for comment in comments {
+            let path_str = comment.path.to_string_lossy();
+            let comment_side = comment.side.as_str();
+            let comment_start = comment.start_line.map(|l| l as u64);
+            if existing.iter().any(|c| {
+                c.path == path_str.as_ref()
+                    && c.line == comment.line as u64
+                    && c.side.eq_ignore_ascii_case(comment_side)
+                    && c.start_line == comment_start
+                    && c.body == comment.body
+            }) {
+                continue;
+            }
+            self.post_existing_pending_comment(repository, number, id, comment)?;
+        }
+        if event == crate::forge::submit::SubmitEvent::Draft {
+            if !body.is_empty() {
+                let mut args = vec![
+                    "api".to_string(),
+                    format!("{endpoint}/{id}"),
+                    "--method".into(),
+                    "PUT".into(),
+                    "--input".into(),
+                    "-".into(),
+                ];
+                if repository.host != DEFAULT_GITHUB_HOST {
+                    args.extend(["--hostname".into(), repository.host.clone()]);
+                }
+                let payload = serde_json::json!({ "body": body });
+                let output = self
+                    .runner
+                    .run_with_stdin(&args, &payload.to_string())
+                    .map_err(|e| map_gh_error(e, &repository.host))?;
+                return Ok(Some(parse_create_review_response(&output)?));
+            }
+            return Ok(Some(GhCreateReviewResponse {
+                id,
+                html_url: String::new(),
+                state: "PENDING".into(),
+            }));
+        }
+        let mut args = vec![
+            "api".to_string(),
+            format!("{endpoint}/{id}/events"),
+            "--method".into(),
+            "POST".into(),
+            "--input".into(),
+            "-".into(),
+        ];
+        if repository.host != DEFAULT_GITHUB_HOST {
+            args.extend(["--hostname".into(), repository.host.clone()]);
+        }
+        let payload = serde_json::json!({ "event": event.github_event(), "body": body });
+        let output = self
+            .runner
+            .run_with_stdin(&args, &payload.to_string())
+            .map_err(|e| map_gh_error(e, &repository.host))?;
+        Ok(Some(parse_create_review_response(&output)?))
+    }
+
+    fn add_pending_comment(
+        &self,
+        repository: &ForgeRepository,
+        number: u64,
+        commit_id: &str,
+        comment: &crate::forge::submit::InlineComment,
+    ) -> Result<u64> {
+        let endpoint = format!(
+            "repos/{}/{}/pulls/{number}/reviews",
+            repository.owner, repository.name
+        );
+        let review_info = self.find_pending_review(repository, &endpoint)?;
+        if let Some((id, pending_commit)) = review_info {
+            if !pending_commit.is_empty() && !commit_id.is_empty() && pending_commit != commit_id {
+                return Err(TuicrError::Forge(format!(
+                    "Existing pending review is on commit {pending_commit}, but comment is on {commit_id}"
+                )));
+            }
+            self.post_existing_pending_comment(repository, number, id, comment)?;
+            Ok(id)
+        } else {
+            let payload = build_review_payload(
+                commit_id,
+                "",
+                crate::forge::submit::SubmitEvent::Draft,
+                std::slice::from_ref(comment),
+            );
+            let mut args = vec![
+                "api".to_string(),
+                endpoint,
+                "--method".into(),
+                "POST".into(),
+                "--input".into(),
+                "-".into(),
+            ];
+            if repository.host != DEFAULT_GITHUB_HOST {
+                args.extend(["--hostname".to_string(), repository.host.clone()]);
+            }
+            let output = self
+                .runner
+                .run_with_stdin(&args, &payload.to_string())
+                .map_err(|e| map_create_review_error(e, &repository.host))?;
+            Ok(parse_create_review_response(&output)?.id)
+        }
+    }
+}
+
+struct PendingReviewComment {
+    path: String,
+    line: u64,
+    side: String,
+    start_line: Option<u64>,
+    body: String,
+}
+
+impl<R> GitHubGhBackend<R>
+where
+    R: GhCommandRunner,
+{
+    fn list_pending_review_comments(
+        &self,
+        repository: &ForgeRepository,
+        endpoint: &str,
+        id: u64,
+    ) -> Result<Vec<PendingReviewComment>> {
+        let mut results = Vec::new();
+        for page in 1..=100 {
+            let mut args = vec![
+                "api".to_string(),
+                format!("{endpoint}/{id}/comments?per_page=100&page={page}"),
+            ];
+            if repository.host != DEFAULT_GITHUB_HOST {
+                args.extend(["--hostname".into(), repository.host.clone()]);
+            }
+            let output = self.run_gh(args, &repository.host)?;
+            let rows: Vec<serde_json::Value> = serde_json::from_str(&output)?;
+            let len = rows.len();
+            for row in rows {
+                let Some(path) = row["path"].as_str().map(str::to_string) else {
+                    continue;
+                };
+                let Some(line) = row["line"]
+                    .as_u64()
+                    .or_else(|| row["original_line"].as_u64())
+                else {
+                    continue;
+                };
+                let side = row["side"].as_str().unwrap_or("RIGHT").to_string();
+                let start_line = row["start_line"].as_u64();
+                let Some(body) = row["body"].as_str().map(str::to_string) else {
+                    continue;
+                };
+                results.push(PendingReviewComment {
+                    path,
+                    line,
+                    side,
+                    start_line,
+                    body,
+                });
+            }
+            if len < 100 {
+                return Ok(results);
+            }
+        }
+        Ok(results)
+    }
+
+    fn find_pending_review(
+        &self,
+        repository: &ForgeRepository,
+        endpoint: &str,
+    ) -> Result<Option<(u64, String)>> {
+        let viewer = self.current_viewer(repository)?.ok_or_else(|| {
+            TuicrError::Forge("GitHub did not return the current viewer login".into())
+        })?;
+        for page in 1..=100 {
+            let mut args = vec![
+                "api".to_string(),
+                format!("{endpoint}?per_page=100&page={page}"),
+            ];
+            if repository.host != DEFAULT_GITHUB_HOST {
+                args.extend(["--hostname".into(), repository.host.clone()]);
+            }
+            let output = self.run_gh(args, &repository.host)?;
+            let rows: Vec<serde_json::Value> = serde_json::from_str(&output)?;
+            let len = rows.len();
+            if let Some((id, commit_id)) = rows
+                .iter()
+                .find(|row| row["state"] == "PENDING" && row["user"]["login"] == viewer)
+                .and_then(|row| {
+                    let id = row["id"].as_u64()?;
+                    let commit_id = row["commit_id"].as_str().unwrap_or("").to_string();
+                    Some((id, commit_id))
+                })
+            {
+                return Ok(Some((id, commit_id)));
+            }
+            if len < 100 {
+                return Ok(None);
+            }
+        }
+        Err(TuicrError::Forge(
+            "GitHub review list exceeded pagination limit".into(),
+        ))
+    }
+
+    fn post_existing_pending_comment(
+        &self,
+        repository: &ForgeRepository,
+        number: u64,
+        id: u64,
+        comment: &crate::forge::submit::InlineComment,
+    ) -> Result<()> {
+        let review_node = self.review_node_id(repository, number, id)?;
+        let mut input = serde_json::json!({
+            "pullRequestReviewId": review_node,
+            "path": comment.path.to_string_lossy(),
+            "body": comment.body,
+            "line": comment.line,
+            "side": comment.side.as_str(),
+        });
+        if let Some(start) = comment.start_line {
+            input["startLine"] = start.into();
+            input["startSide"] = comment.start_side.unwrap_or(comment.side).as_str().into();
+        }
+        let query = "mutation($input: AddPullRequestReviewThreadInput!) { addPullRequestReviewThread(input: $input) { thread { id } } }";
+        let mut args = vec![
+            "api".to_string(),
+            "graphql".into(),
+            "--input".into(),
+            "-".into(),
+        ];
+        if repository.host != DEFAULT_GITHUB_HOST {
+            args.extend(["--hostname".into(), repository.host.clone()]);
+        }
+        let payload = serde_json::json!({ "query": query, "variables": { "input": input } });
+        let output = self
+            .runner
+            .run_with_stdin(&args, &payload.to_string())
+            .map_err(|error| map_gh_error(error, &repository.host))?;
+        let response: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(errors) = response.get("errors") {
+            return Err(TuicrError::Forge(format!(
+                "GitHub pending comment failed: {errors}"
+            )));
+        }
+        if response
+            .pointer("/data/addPullRequestReviewThread/thread/id")
+            .and_then(|id| id.as_str())
+            .is_none()
+        {
+            return Err(TuicrError::Forge(
+                "GitHub did not confirm pending comment".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn review_node_id(&self, repository: &ForgeRepository, number: u64, id: u64) -> Result<String> {
+        let query = "query($owner: String!, $name: String!, $number: Int!, $cursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviews(first: 100, after: $cursor, states: PENDING) { nodes { id databaseId fullDatabaseId } pageInfo { hasNextPage endCursor } } } } }";
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut args = vec![
+                "api".to_string(),
+                "graphql".into(),
+                "-f".into(),
+                format!("query={query}"),
+                "-f".into(),
+                format!("owner={}", repository.owner),
+                "-f".into(),
+                format!("name={}", repository.name),
+                "-F".into(),
+                format!("number={number}"),
+            ];
+            if let Some(value) = &cursor {
+                args.extend(["-f".into(), format!("cursor={value}")]);
+            }
+            if repository.host != DEFAULT_GITHUB_HOST {
+                args.extend(["--hostname".into(), repository.host.clone()]);
+            }
+            let output = self.run_gh(args, &repository.host)?;
+            let response: serde_json::Value = serde_json::from_str(&output)?;
+            if let Some(errors) = response.get("errors") {
+                return Err(TuicrError::Forge(format!(
+                    "GitHub pending review lookup failed: {errors}"
+                )));
+            }
+            let reviews = &response["data"]["repository"]["pullRequest"]["reviews"];
+            if let Some(node) = reviews["nodes"].as_array().and_then(|nodes| {
+                nodes.iter().find(|node| {
+                    let matches_full = node["fullDatabaseId"]
+                        .as_str()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        == Some(id);
+                    let matches_db = node["databaseId"].as_u64() == Some(id);
+                    matches_full || matches_db
+                })
+            }) {
+                return node["id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| TuicrError::Forge("GitHub review node missing ID".into()));
+            }
+            if reviews["pageInfo"]["hasNextPage"] != true {
+                break;
+            }
+            cursor = reviews["pageInfo"]["endCursor"]
+                .as_str()
+                .map(str::to_string);
+            if cursor.is_none() {
+                break;
+            }
+        }
+        Err(TuicrError::Forge(
+            "GitHub pending review node ID unavailable".into(),
+        ))
+    }
 }
 
 impl<R> GitHubGhBackend<R>
@@ -1364,6 +1717,19 @@ index 1111111..2222222 100644
                             stderr: "unexpected graphql query".to_string(),
                         })
                     }
+                }
+                Some("api") if args.get(1).map(String::as_str) == Some("user") => {
+                    Ok(r#"{"login":"reviewer"}"#.to_string())
+                }
+                Some("api")
+                    if args.get(1).is_some_and(|path| {
+                        path.contains("/reviews/") && path.contains("/comments")
+                    }) =>
+                {
+                    Ok("[]".to_string())
+                }
+                Some("api") if args.get(1).is_some_and(|path| path.contains("/reviews?")) => {
+                    Ok("[]".to_string())
                 }
                 // gh api repos/.../pulls/<n>/commits (commit list).
                 Some("api")
@@ -2450,6 +2816,210 @@ Match host github-work
             body: body.to_string(),
             comment_id: format!("cid-{line}"),
         }
+    }
+
+    #[test]
+    fn should_create_pending_review_for_first_comment() {
+        let backend = GitHubGhBackend::with_runner(Some(repo()), FakeGhRunner::default());
+        let id = backend
+            .add_pending_comment(&repo(), 125, "head-sha", &inline(42, "text"))
+            .unwrap();
+        assert_eq!(id, 123456);
+        let calls = backend.runner.stdin_calls.borrow();
+        assert_eq!(calls.len(), 1);
+        let payload: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert!(payload.get("event").is_none());
+        assert_eq!(payload["commit_id"], "head-sha");
+        assert_eq!(payload["comments"][0]["line"], 42);
+    }
+
+    #[test]
+    fn should_attach_comment_to_existing_pending_review() {
+        struct PendingRunner(std::cell::RefCell<Vec<(Vec<String>, String)>>);
+        impl GhCommandRunner for PendingRunner {
+            fn run(&self, args: &[String]) -> GhCommandResult<String> {
+                if args.get(1).map(String::as_str) == Some("user") {
+                    Ok(r#"{"login":"reviewer"}"#.into())
+                } else if args.get(1).map(String::as_str) == Some("graphql")
+                    && args.iter().any(|arg| arg.contains("reviews(first:"))
+                {
+                    Ok(r#"{"data":{"repository":{"pullRequest":{"reviews":{"nodes":[{"id":"PRR_88","fullDatabaseId":"88"}],"pageInfo":{"hasNextPage":false}}}}}}"#.into())
+                } else if args.get(1).map(String::as_str) == Some("graphql") {
+                    Ok(
+                        r#"{"data":{"addPullRequestReviewThread":{"thread":{"id":"thread-99"}}}}"#
+                            .into(),
+                    )
+                } else {
+                    Ok(r#"[{"id":77,"state":"PENDING","user":{"login":"other"}},{"id":88,"state":"PENDING","user":{"login":"reviewer"}}]"#.into())
+                }
+            }
+            fn run_with_stdin(&self, args: &[String], stdin: &str) -> GhCommandResult<String> {
+                self.0.borrow_mut().push((args.to_vec(), stdin.to_string()));
+                Ok(
+                    r#"{"data":{"addPullRequestReviewThread":{"thread":{"id":"thread-99"}}}}"#
+                        .into(),
+                )
+            }
+        }
+        let backend = GitHubGhBackend::with_runner(Some(repo()), PendingRunner(Default::default()));
+        let id = backend
+            .add_pending_comment(&repo(), 125, "head-sha", &inline(42, "text"))
+            .unwrap();
+        assert_eq!(id, 88);
+        let calls = backend.runner.0.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0[1], "graphql");
+        let payload: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert_eq!(
+            payload["variables"]["input"]["pullRequestReviewId"],
+            "PRR_88"
+        );
+        assert_eq!(payload["variables"]["input"]["line"], 42);
+        assert_eq!(payload["variables"]["input"]["body"], "text");
+    }
+
+    #[test]
+    fn should_submit_existing_pending_review_instead_of_creating_another() {
+        struct PendingRunner(std::cell::RefCell<Vec<(Vec<String>, String)>>);
+        impl GhCommandRunner for PendingRunner {
+            fn run(&self, args: &[String]) -> GhCommandResult<String> {
+                if args.get(1).map(String::as_str) == Some("user") {
+                    Ok(r#"{"login":"reviewer"}"#.into())
+                } else {
+                    Ok(r#"[{"id":88,"state":"PENDING","user":{"login":"reviewer"}}]"#.into())
+                }
+            }
+            fn run_with_stdin(&self, args: &[String], stdin: &str) -> GhCommandResult<String> {
+                self.0.borrow_mut().push((args.to_vec(), stdin.to_string()));
+                Ok(r#"{"id":88,"state":"APPROVED"}"#.into())
+            }
+        }
+        let backend = GitHubGhBackend::with_runner(Some(repo()), PendingRunner(Default::default()));
+        let response = backend
+            .submit_pending_review(&repo(), 125, SubmitEvent::Approve, "head-sha", "LGTM", &[])
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.id, 88);
+        let calls = backend.runner.0.borrow();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].0[1].ends_with("/reviews/88/events"));
+        let payload: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert_eq!(payload["event"], "APPROVE");
+    }
+
+    #[test]
+    fn should_skip_duplicate_comment_on_submit_pending_review_retry() {
+        struct ExistingCommentsRunner(std::cell::RefCell<Vec<(Vec<String>, String)>>);
+        impl GhCommandRunner for ExistingCommentsRunner {
+            fn run(&self, args: &[String]) -> GhCommandResult<String> {
+                if args.get(1).map(String::as_str) == Some("user") {
+                    Ok(r#"{"login":"reviewer"}"#.into())
+                } else if args.get(1).is_some_and(|p| p.contains("/comments?")) {
+                    Ok(r#"[{"path":"src/lib.rs","line":42,"side":"RIGHT","body":"already posted"}]"#.into())
+                } else {
+                    Ok(r#"[{"id":88,"state":"PENDING","user":{"login":"reviewer"}}]"#.into())
+                }
+            }
+            fn run_with_stdin(&self, args: &[String], stdin: &str) -> GhCommandResult<String> {
+                self.0.borrow_mut().push((args.to_vec(), stdin.to_string()));
+                Ok(r#"{"id":88,"state":"COMMENTED"}"#.into())
+            }
+        }
+        let backend =
+            GitHubGhBackend::with_runner(Some(repo()), ExistingCommentsRunner(Default::default()));
+        let comment = inline(42, "already posted");
+        let response = backend
+            .submit_pending_review(
+                &repo(),
+                125,
+                SubmitEvent::Comment,
+                "head-sha",
+                "summary",
+                &[comment],
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.id, 88);
+        let calls = backend.runner.0.borrow();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].0[1].ends_with("/reviews/88/events"));
+    }
+
+    #[test]
+    fn should_reject_attaching_pending_comment_if_commit_mismatches() {
+        struct MismatchedRunner;
+        impl GhCommandRunner for MismatchedRunner {
+            fn run(&self, args: &[String]) -> GhCommandResult<String> {
+                if args.get(1).map(String::as_str) == Some("user") {
+                    Ok(r#"{"login":"reviewer"}"#.into())
+                } else {
+                    Ok(r#"[{"id":88,"state":"PENDING","commit_id":"commit-aaa","user":{"login":"reviewer"}}]"#.into())
+                }
+            }
+        }
+        let backend = GitHubGhBackend::with_runner(Some(repo()), MismatchedRunner);
+        let err = backend
+            .add_pending_comment(&repo(), 125, "commit-bbb", &inline(42, "text"))
+            .unwrap_err();
+        assert!(err.to_string().contains("commit-aaa"));
+        assert!(err.to_string().contains("commit-bbb"));
+    }
+
+    #[test]
+    fn should_match_fallback_database_id_in_review_node_id() {
+        struct DatabaseIdRunner;
+        impl GhCommandRunner for DatabaseIdRunner {
+            fn run(&self, args: &[String]) -> GhCommandResult<String> {
+                if args.get(1).map(String::as_str) == Some("graphql") {
+                    Ok(r#"{"data":{"repository":{"pullRequest":{"reviews":{"nodes":[{"id":"PRR_legacy","databaseId":88}],"pageInfo":{"hasNextPage":false}}}}}}"#.into())
+                } else {
+                    Ok("{}".into())
+                }
+            }
+        }
+        let backend = GitHubGhBackend::with_runner(Some(repo()), DatabaseIdRunner);
+        let node_id = backend.review_node_id(&repo(), 125, 88).unwrap();
+        assert_eq!(node_id, "PRR_legacy");
+    }
+
+    #[test]
+    fn should_update_pending_review_body_on_draft_submit() {
+        struct UpdateBodyRunner(std::cell::RefCell<Vec<(Vec<String>, String)>>);
+        impl GhCommandRunner for UpdateBodyRunner {
+            fn run(&self, args: &[String]) -> GhCommandResult<String> {
+                if args.get(1).map(String::as_str) == Some("user") {
+                    Ok(r#"{"login":"reviewer"}"#.into())
+                } else if args.get(1).is_some_and(|p| p.contains("/comments?")) {
+                    Ok("[]".into())
+                } else {
+                    Ok(r#"[{"id":88,"state":"PENDING","user":{"login":"reviewer"}}]"#.into())
+                }
+            }
+            fn run_with_stdin(&self, args: &[String], stdin: &str) -> GhCommandResult<String> {
+                self.0.borrow_mut().push((args.to_vec(), stdin.to_string()));
+                Ok(r#"{"id":88,"state":"PENDING"}"#.into())
+            }
+        }
+        let backend =
+            GitHubGhBackend::with_runner(Some(repo()), UpdateBodyRunner(Default::default()));
+        let response = backend
+            .submit_pending_review(
+                &repo(),
+                125,
+                SubmitEvent::Draft,
+                "head-sha",
+                "draft summary",
+                &[],
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.id, 88);
+        let calls = backend.runner.0.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0[1], "repos/agavra/tuicr/pulls/125/reviews/88");
+        assert_eq!(calls[0].0[3], "PUT");
+        let payload: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert_eq!(payload["body"], "draft summary");
     }
 
     #[test]

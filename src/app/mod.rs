@@ -993,6 +993,19 @@ pub enum PrSubmitEvent {
     },
 }
 
+pub struct PendingCommentQueueItem {
+    pub key: crate::forge::traits::PrSessionKey,
+    pub commit_id: String,
+    pub comment_id: String,
+    pub inline: crate::forge::submit::InlineComment,
+}
+
+pub struct PendingCommentEvent {
+    pub key: crate::forge::traits::PrSessionKey,
+    pub comment_id: String,
+    pub result: std::result::Result<u64, String>,
+}
+
 /// Result delivered from the remote-thread fetch background thread. The PR
 /// diff is rendered as soon as it parses; threads land asynchronously and
 /// trigger a repaint via `poll_pr_threads_events`.
@@ -1008,6 +1021,8 @@ pub enum PrThreadsEvent {
             std::result::Result<Vec<crate::forge::remote_comments::RemoteReviewThread>, String>,
         summaries:
             std::result::Result<Vec<crate::forge::remote_comments::RemoteReviewSummary>, String>,
+        viewer_has_pending_review: bool,
+        epoch: u64,
     },
 }
 
@@ -1357,6 +1372,10 @@ pub struct App {
     /// Background-thread channel that delivers the create-review result.
     /// `Receiver` is only present while a submit is in flight.
     pub pr_submit_rx: Option<std::sync::mpsc::Receiver<PrSubmitEvent>>,
+    pub pending_comment_rx: Option<std::sync::mpsc::Receiver<PendingCommentEvent>>,
+    pub pending_comment_queue: std::collections::VecDeque<PendingCommentQueueItem>,
+    pub viewer_has_pending_review: bool,
+    pub pr_threads_epoch: u64,
     /// Latest known PR head SHA from the remote. PR 5 leaves this as the
     /// open-time head so the stale-head warning never fires; PR 6 may refresh
     /// it via a pre-submit `gh pr view` to power the warning.
