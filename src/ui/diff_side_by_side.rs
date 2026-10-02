@@ -578,6 +578,7 @@ pub(super) fn render_side_by_side_diff(frame: &mut Frame, app: &mut App, area: R
                     thread,
                     muted,
                     app.forge_kind(),
+                    ctx.panel_width,
                 );
                 for mut comment_line in thread_lines {
                     let indicator = cursor_indicator(line_idx, ctx.current_line_idx);
@@ -2079,6 +2080,7 @@ fn add_remote_threads_to_line(
             thread,
             muted,
             ctx.app.forge_kind(),
+            ctx.panel_width,
         );
         let box_top_row = line_idx;
         for mut comment_line in thread_lines {

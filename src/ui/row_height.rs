@@ -10,9 +10,8 @@
 //! once, in the renderer's shared text builders in `ui::diff_view`; this
 //! module only calls them and concatenates the parts.
 //! Local comment-box annotations are pre-wrapped by `format_comment_lines`,
-//! so each is exactly one row. Remote comment rows are not pre-wrapped; their
-//! formatted spans are measured here with the same outer wrap pass used by
-//! the renderers.
+//! so each is exactly one row. Remote thread bodies are pre-wrapped.
+//! Headers and summaries are measured with the renderer outer wrap pass.
 
 use ratatui::text::{Line, Span};
 
@@ -71,6 +70,7 @@ pub(crate) fn annotation_row_height(app: &App, idx: usize) -> usize {
                     thread,
                     muted,
                     app.forge_kind(),
+                    viewport_width,
                 )
                 .into_iter()
                 .nth(row)
@@ -814,7 +814,7 @@ mod tests {
     }
 
     fn assert_remote_rows_wrap(app: &App) {
-        for label in ["summary", "thread"] {
+        for label in ["summary"] {
             let wrapped = app
                 .line_annotations
                 .iter()
