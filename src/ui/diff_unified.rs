@@ -210,6 +210,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                     thread,
                     muted,
                     app.forge_kind(),
+                    inner.width as usize,
                 );
                 for mut comment_line in thread_lines {
                     let indicator = cursor_indicator(line_idx, current_line_idx);
@@ -1466,8 +1467,13 @@ fn render_remote_threads_for_anchor(
 
         // Render the entire thread as one fused box so it reads as a
         // single discussion unit.
-        let thread_lines =
-            comment_panel::format_remote_thread_lines(&app.theme, thread, muted, app.forge_kind());
+        let thread_lines = comment_panel::format_remote_thread_lines(
+            &app.theme,
+            thread,
+            muted,
+            app.forge_kind(),
+            comment_width.saturating_add(1),
+        );
         let box_top_row = *line_idx;
         for mut comment_line in thread_lines {
             let indicator = cursor_indicator(*line_idx, current_line_idx);

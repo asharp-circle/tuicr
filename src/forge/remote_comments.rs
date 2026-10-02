@@ -239,15 +239,26 @@ pub fn filter_threads(
 /// Layout (must match `ui::comment_panel::format_remote_thread_lines`):
 /// - 1 header line for the root comment (`╭─ [github @author] L42 ──`)
 /// - 1 separator line per reply (`├─ ↳ @author ──`)
-/// - 1 body line per `\n`-split line in each comment's body
+/// - width-dependent wrapped body rows for each comment
 /// - 1 reaction line per comment with reactions
 /// - 1 footer line at the end of the thread (`╰────`)
-pub fn thread_display_comment_indices(thread: &RemoteReviewThread) -> Vec<usize> {
+pub fn thread_display_comment_indices(
+    thread: &RemoteReviewThread,
+    viewport_width: usize,
+) -> Vec<usize> {
     let mut indices = Vec::new();
     for (comment_idx, comment) in thread.comments.iter().enumerate() {
         indices.extend(std::iter::repeat_n(
             comment_idx,
-            1 + comment.body.split('\n').count() + usize::from(!comment.reactions.is_empty()),
+            1 + comment
+                .body
+                .split('\n')
+                .map(|line| {
+                    crate::ui::comment_panel::wrap_segments(line, viewport_width.saturating_sub(10))
+                        .len()
+                })
+                .sum::<usize>()
+                + usize::from(!comment.reactions.is_empty()),
         ));
     }
     indices.push(thread.comments.len().saturating_sub(1));
@@ -257,8 +268,8 @@ pub fn thread_display_comment_indices(thread: &RemoteReviewThread) -> Vec<usize>
 /// Count the number of rendered lines a thread occupies in the diff view.
 /// Uses the shared row-to-comment mapping so annotations and navigation
 /// cannot drift apart.
-pub fn thread_display_lines(thread: &RemoteReviewThread) -> usize {
-    thread_display_comment_indices(thread).len()
+pub fn thread_display_lines(thread: &RemoteReviewThread, viewport_width: usize) -> usize {
+    thread_display_comment_indices(thread, viewport_width).len()
 }
 
 /// Count the number of rendered lines a review summary occupies in the

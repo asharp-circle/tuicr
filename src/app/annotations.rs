@@ -126,6 +126,7 @@ impl App {
                         thread_idx,
                         thread,
                         self.reply_thread_id.as_deref(),
+                        self.diff_state.viewport_width,
                     );
                 }
             }
@@ -476,8 +477,11 @@ impl App {
         thread_idx: usize,
         thread: &crate::forge::remote_comments::RemoteReviewThread,
         reply_thread_id: Option<&str>,
+        viewport_width: usize,
     ) {
-        for comment_idx in crate::forge::remote_comments::thread_display_comment_indices(thread) {
+        for comment_idx in
+            crate::forge::remote_comments::thread_display_comment_indices(thread, viewport_width)
+        {
             annotations.push(AnnotatedLine::RemoteThreadLine {
                 thread_idx,
                 comment_idx,
@@ -494,6 +498,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_remote_threads(
         annotations: &mut Vec<AnnotatedLine>,
         threads: &[crate::forge::remote_comments::RemoteReviewThread],
@@ -502,6 +507,7 @@ impl App {
         line: u32,
         side: LineSide,
         reply_thread_id: Option<&str>,
+        viewport_width: usize,
     ) {
         let Some(file_index) = index.by_file.get(path.to_string_lossy().as_ref()) else {
             return;
@@ -516,6 +522,7 @@ impl App {
                     *thread_idx,
                     thread,
                     reply_thread_id,
+                    viewport_width,
                 );
             }
         }
@@ -564,6 +571,7 @@ impl App {
                     old_ln,
                     LineSide::Old,
                     reply_thread_id,
+                    viewport_width,
                 );
             }
 
@@ -586,6 +594,7 @@ impl App {
                     new_ln,
                     LineSide::New,
                     reply_thread_id,
+                    viewport_width,
                 );
             }
         }
@@ -639,6 +648,7 @@ impl App {
                             new_ln,
                             LineSide::New,
                             reply_thread_id,
+                            viewport_width,
                         );
                     }
 
@@ -706,6 +716,7 @@ impl App {
                                 old_ln,
                                 LineSide::Old,
                                 reply_thread_id,
+                                viewport_width,
                             );
                         }
                         Self::push_comments(
@@ -726,6 +737,7 @@ impl App {
                                 new_ln,
                                 LineSide::New,
                                 reply_thread_id,
+                                viewport_width,
                             );
                         }
                     }
@@ -760,6 +772,7 @@ impl App {
                             new_ln,
                             LineSide::New,
                             reply_thread_id,
+                            viewport_width,
                         );
                     }
 

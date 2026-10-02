@@ -996,7 +996,7 @@ impl App {
                     if visibility.render_decision(thread).is_none() {
                         continue;
                     }
-                    height += thread_display_lines(thread)
+                    height += thread_display_lines(thread, self.diff_state.viewport_width)
                         + 3 * usize::from(
                             self.reply_thread_id.as_deref() == Some(thread.id.as_str()),
                         );
@@ -1068,8 +1068,11 @@ impl App {
                     RemoteCommentSide::Right => LineSide::New,
                     RemoteCommentSide::Left => LineSide::Old,
                 };
-                *map.entry((line, side)).or_default() += thread_display_lines(thread)
-                    + 3 * usize::from(self.reply_thread_id.as_deref() == Some(thread.id.as_str()));
+                *map.entry((line, side)).or_default() +=
+                    thread_display_lines(thread, self.diff_state.viewport_width)
+                        + 3 * usize::from(
+                            self.reply_thread_id.as_deref() == Some(thread.id.as_str()),
+                        );
             }
             map
         };

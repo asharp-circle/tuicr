@@ -307,6 +307,7 @@ pub fn format_remote_thread_lines(
     thread: &crate::forge::remote_comments::RemoteReviewThread,
     muted: bool,
     forge_kind: Option<ForgeKind>,
+    width: usize,
 ) -> Vec<Line<'static>> {
     let (badge_fg, border_fg, body_fg) = if muted {
         (theme.fg_dim, theme.fg_dim, theme.fg_dim)
@@ -358,7 +359,11 @@ pub fn format_remote_thread_lines(
             ]));
         }
 
-        for line in comment.body.split('\n') {
+        for line in comment
+            .body
+            .split('\n')
+            .flat_map(|line| wrap_segments(line, width.saturating_sub(10)))
+        {
             result.push(Line::from(vec![
                 Span::styled("    │  ".to_string(), border_style),
                 Span::styled(line.to_string(), body_style),
@@ -1152,7 +1157,7 @@ mod tests {
         };
 
         let lines =
-            format_remote_thread_lines(&test_theme(), &thread, false, Some(ForgeKind::GitLab));
+            format_remote_thread_lines(&test_theme(), &thread, false, Some(ForgeKind::GitLab), 120);
         let header = lines[0]
             .spans
             .iter()
@@ -1192,10 +1197,10 @@ mod tests {
             }],
         };
         let lines =
-            format_remote_thread_lines(&test_theme(), &thread, false, Some(ForgeKind::GitHub));
+            format_remote_thread_lines(&test_theme(), &thread, false, Some(ForgeKind::GitHub), 120);
         assert_eq!(
             lines.len(),
-            crate::forge::remote_comments::thread_display_lines(&thread)
+            crate::forge::remote_comments::thread_display_lines(&thread, 120)
         );
         let rendered = lines
             .iter()
@@ -1207,6 +1212,34 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(rendered.iter().any(|line| line.contains("❤️ 2*")));
+        let mut thread = thread;
+        thread.comments[0].body = "long body 界🙂".repeat(20) + "\n\nlast\n";
+        thread.comments.push(thread.comments[0].clone());
+        for width in [20, 40, 80, 120] {
+            let lines = format_remote_thread_lines(
+                &test_theme(),
+                &thread,
+                false,
+                Some(ForgeKind::GitHub),
+                width,
+            );
+            let indices =
+                crate::forge::remote_comments::thread_display_comment_indices(&thread, width);
+            assert_eq!(lines.len(), indices.len());
+            let body_rows: Vec<_> = lines
+                .iter()
+                .filter(|line| {
+                    line.spans
+                        .first()
+                        .is_some_and(|span| span.content == BORDER_PREFIX)
+                        && !line.spans.iter().any(|span| span.content.contains("❤️"))
+                })
+                .collect();
+            assert!(body_rows.len() > 8);
+            for line in body_rows {
+                assert!(line.width() <= width.saturating_sub(3));
+            }
+        }
     }
 
     #[test]
