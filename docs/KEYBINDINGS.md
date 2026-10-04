@@ -129,6 +129,8 @@ considers files that pass the active filters.
 | `<leader>e` | Toggle file list visibility |
 | `<leader>s` | Toggle commit selector visibility (also `:set commits!`) |
 | `<leader>n` | Toggle relative line numbers (also `:set relativenumber!`) |
+| `<leader>f` | Toggle single-file view (also `:focus`, `:f`) |
+| `<leader>Q` | Close tuicr (warns on unsaved comments) |
 | `Enter` | Select file (when file list is focused) |
 
 ## File picker modal
@@ -289,6 +291,7 @@ In command mode,
 | `:x` / `:wq` | Save and quit (prompts to copy if comments exist) |
 | `ZZ` | Save and quit |
 | `ZQ` | Quit without saving |
+| `<leader>Q` | Close tuicr (warns on unsaved comments; discards review-only state) |
 | `?` | Toggle help |
 
 Pressing bare `q` no longer quits by default; it prints a reminder to use `:q` instead. Set
