@@ -616,6 +616,9 @@ pub enum InputMode {
     /// a live preview immediately; `/` opens a filter draft the same way the
     /// file tree's `i`/`e`/`/` prompts work.
     ThemePicker,
+    /// Interactive fuzzy file picker modal opened by `<leader><leader>`,
+    /// `Ctrl-P`, or `:files`.
+    FilePicker,
     ReactionPicker,
 }
 
@@ -1220,6 +1223,8 @@ pub struct App {
     pub file_filter: FileTreeFilter,
     /// Runtime `:theme` picker state.
     pub theme_picker: ThemePickerState,
+    /// Fuzzy file picker modal state.
+    pub file_picker: FilePickerState,
     pub command_buffer: String,
     pub(crate) command_completion: Option<CommandCompletionState>,
     pub(crate) command_return_mode: InputMode,
@@ -1956,6 +1961,8 @@ mod search;
 mod session;
 pub mod sessions_tab;
 mod submit;
+pub mod file_picker;
+pub use file_picker::{FilePickerCandidate, FilePickerMatch, FilePickerState};
 mod theme_picker;
 mod tree;
 mod visual;

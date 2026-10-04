@@ -323,6 +323,7 @@ A first-session cheatsheet. Press `?` inside tuicr for the full reference.
 | `R` | Toggle hunk reviewed |
 | `e` | Edit the comment at the diff cursor in `$EDITOR` (local draft or your GitHub inline comment); otherwise open the focused file (in PR review: the reviewed revision) |
 | `y` | Copy review to clipboard |
+| `<leader><leader>` / `Ctrl-p` / `:files` | Open the fuzzy file picker modal to jump between review files |
 | `:edit` | Open focused file in `$EDITOR` |
 | `:submit` | Push review to GitHub, GitLab, Gitea, Bitbucket, Azure DevOps, or Gerrit |
 | `:theme` | Open a live-preview theme picker (`/` to filter); `:theme <name>` applies directly. Session-only; set `theme` in `config.toml` to keep it |

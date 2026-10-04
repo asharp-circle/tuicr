@@ -16,10 +16,11 @@ use tuicr::editor::{EditorCommand, EditorError, EditorLaunch, EditorSurface, Edi
 use tuicr::handler::{
     handle_command_action, handle_comment_action, handle_comment_navigator_action,
     handle_commit_select_action, handle_commit_selector_action, handle_confirm_action,
-    handle_diff_action, handle_file_list_action, handle_help_action, handle_mouse_event,
-    handle_reaction_picker_action, handle_search_action, handle_submit_action_picker_action,
-    handle_submit_confirm_action, handle_submit_resolver_action, handle_summary_action,
-    handle_theme_picker_action, handle_visual_action,
+    handle_diff_action, handle_file_list_action, handle_file_picker_action, handle_help_action,
+    handle_mouse_event, handle_reaction_picker_action, handle_search_action,
+    handle_submit_action_picker_action, handle_submit_confirm_action,
+    handle_submit_resolver_action, handle_summary_action, handle_theme_picker_action,
+    handle_visual_action,
 };
 use tuicr::input::{
     Action, map_file_tree_mode_with_q_quits, map_file_tree_prompt_mode,
@@ -607,7 +608,15 @@ fn main() -> anyhow::Result<()> {
                     // Handle pending leader command for panel focus, file list toggle, and review comments.
                     if pending_leader {
                         pending_leader = false;
+                        if key.code == crossterm::event::KeyCode::Char(app.leader_key) {
+                            app.enter_file_picker_mode();
+                            continue;
+                        }
                         match key.code {
+                            crossterm::event::KeyCode::Char('p') => {
+                                app.enter_file_picker_mode();
+                                continue;
+                            }
                             crossterm::event::KeyCode::Char('e') => {
                                 app.toggle_file_list();
                                 continue;
@@ -701,6 +710,10 @@ fn main() -> anyhow::Result<()> {
 
                     // Handle pending command setters (these work in any mode)
                     match action {
+                        Action::OpenFilePicker => {
+                            app.enter_file_picker_mode();
+                            continue;
+                        }
                         Action::PendingZCommand => {
                             pending_z = true;
                             app.pending_count = None;
@@ -859,6 +872,7 @@ fn main() -> anyhow::Result<()> {
                         InputMode::Comment => handle_comment_action(&mut app, action),
                         InputMode::Command => handle_command_action(&mut app, action),
                         InputMode::Search => handle_search_action(&mut app, action),
+                        InputMode::FilePicker => handle_file_picker_action(&mut app, action),
                         InputMode::CommitSelect if app.pr_filter_editing() => {
                             handle_commit_select_action(&mut app, action)
                         }
@@ -914,6 +928,7 @@ fn dispatch_action(app: &mut App, action: Action) {
         InputMode::SubmitConfirm => handle_submit_confirm_action(app, action),
         InputMode::SubmitActionPicker => handle_submit_action_picker_action(app, action),
         InputMode::ThemePicker => handle_theme_picker_action(app, action),
+        InputMode::FilePicker => handle_file_picker_action(app, action),
         InputMode::ReactionPicker => handle_reaction_picker_action(app, action),
         InputMode::Normal => match app.focused_panel {
             FocusedPanel::FileList => handle_file_list_action(app, action),

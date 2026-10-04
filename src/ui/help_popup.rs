@@ -258,6 +258,13 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
         ]),
         Line::from(vec![
             Span::styled(
+                format!("  {leader}{leader} / C-p  "),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!("Open fuzzy file picker modal (also `:files`, {leader}p)")),
+        ]),
+        Line::from(vec![
+            Span::styled(
                 "  h/l       ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
@@ -756,6 +763,13 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Span::raw("Open the theme picker; :theme <name> applies directly"),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "  :files    ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!("Open fuzzy file picker modal ({leader}{leader}, C-p, {leader}p)")),
         ]),
         Line::from(vec![
             Span::styled(

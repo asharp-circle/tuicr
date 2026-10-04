@@ -160,6 +160,9 @@ pub enum Action {
     /// `/` inside the theme picker — open its filter prompt.
     ThemePickerFilter,
 
+    /// Open fuzzy file picker modal (`Ctrl-P`, `<leader><leader>`, or `:files`).
+    OpenFilePicker,
+
     // No-op
     None,
 }
@@ -192,6 +195,7 @@ pub fn map_key_to_action_with_q_quits(
         InputMode::SubmitConfirm => map_submit_confirm_mode(key),
         InputMode::SubmitActionPicker => map_submit_action_picker_mode_with_q_quits(key, q_quits),
         InputMode::ThemePicker => map_theme_picker_mode(key),
+        InputMode::FilePicker => map_file_picker_mode(key),
         InputMode::ReactionPicker => map_reaction_picker_mode(key),
     }
 }
@@ -269,6 +273,9 @@ fn map_normal_mode_with_q_quits(key: KeyEvent, leader_key: char, q_quits: bool) 
         (KeyCode::Char('e'), KeyModifiers::NONE) => Action::EditFile,
         (KeyCode::Char('n'), KeyModifiers::NONE) => Action::SearchNext,
         (KeyCode::Char('N'), _) => Action::SearchPrev,
+
+        // Quick file picker
+        (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::OpenFilePicker,
 
         // Mode changes (use _ for shifted characters like : and ?)
         (KeyCode::Char(':'), _) => Action::EnterCommandMode,
@@ -613,6 +620,27 @@ pub fn map_theme_picker_filter_mode(key: KeyEvent) -> Action {
         (KeyCode::Enter, KeyModifiers::NONE) => Action::SubmitInput,
         (KeyCode::Backspace, KeyModifiers::NONE) => Action::DeleteChar,
         (KeyCode::Char('u'), KeyModifiers::CONTROL) => Action::ClearLine,
+        (KeyCode::Char(c), mods) if is_altgr_text(mods) => Action::InsertChar(c),
+        (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => Action::InsertChar(c),
+        _ => Action::None,
+    }
+}
+
+/// Key map for `InputMode::FilePicker`.
+/// Typing characters immediately filters the candidate file list.
+pub fn map_file_picker_mode(key: KeyEvent) -> Action {
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc, _) => Action::ExitMode,
+        (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::ExitMode,
+        (KeyCode::Enter, KeyModifiers::NONE) => Action::SubmitInput,
+        (KeyCode::Backspace, KeyModifiers::NONE) => Action::DeleteChar,
+        (KeyCode::Char('u'), KeyModifiers::CONTROL) => Action::ClearLine,
+        (KeyCode::Down, KeyModifiers::NONE)
+        | (KeyCode::Char('j'), KeyModifiers::CONTROL)
+        | (KeyCode::Char('n'), KeyModifiers::CONTROL) => Action::CursorDown(1),
+        (KeyCode::Up, KeyModifiers::NONE)
+        | (KeyCode::Char('k'), KeyModifiers::CONTROL)
+        | (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::CursorUp(1),
         (KeyCode::Char(c), mods) if is_altgr_text(mods) => Action::InsertChar(c),
         (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => Action::InsertChar(c),
         _ => Action::None,

@@ -342,6 +342,7 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             InputMode::SubmitConfirm => " SUBMIT ".to_string(),
             InputMode::SubmitActionPicker => " SUBMIT ".to_string(),
             InputMode::ThemePicker => " THEME ".to_string(),
+            InputMode::FilePicker => " FILES ".to_string(),
             InputMode::ReactionPicker => " REACT ".to_string(),
         };
 
@@ -401,6 +402,9 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 InputMode::ReactionPicker => Cow::Borrowed("   j/k select · ↵ toggle · esc cancel"),
                 InputMode::ThemePicker => Cow::Borrowed(
                     "   j/k move \u{00b7} \u{21b5} apply \u{00b7} / filter \u{00b7} esc cancel",
+                ),
+                InputMode::FilePicker => Cow::Borrowed(
+                    "   type to filter \u{00b7} \u{2191}/\u{2193} or C-j/C-k move \u{00b7} \u{21b5} jump \u{00b7} esc cancel",
                 ),
             }
         };

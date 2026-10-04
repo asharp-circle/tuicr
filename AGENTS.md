@@ -19,7 +19,8 @@ src/
 │   └── mod.rs           # User config loading (XDG on Unix, %APPDATA% on Windows)
 ├── app.rs               # Application state (App struct, InputMode, etc.)
 │   ├── editor_target.rs # Read-only snapshots of a PR revision for `$EDITOR`
-│   └── file_filter.rs   # File-tree include/exclude regex filters + `/` path search
+│   ├── file_filter.rs   # File-tree include/exclude regex filters + `/` path search
+│   └── file_picker.rs   # Fuzzy file picker modal state and subsequence scoring
 ├── error.rs             # Error types (TuicrError enum)
 ├── editor.rs            # External $EDITOR command construction and launch helpers
 ├── review_store.rs      # Library API for session listing/loading and shared comment insertion
@@ -121,6 +122,7 @@ src/
     ├── help_popup.rs    # Help overlay (? key)
     ├── summary_popup.rs # :summary view of pending local-draft comments
     ├── theme_picker.rs  # :theme runtime picker modal (live preview, / filter)
+    ├── file_picker.rs   # Fuzzy file picker modal (<leader><leader>, Ctrl-P, :files)
     ├── comment_panel.rs # Comment input dialog, confirm dialog
     └── styles.rs        # Color constants and style helper functions
 ```
@@ -190,6 +192,7 @@ Repository-managed agent integrations:
 - `CommitSelect` - selecting commits to review
 - `VisualSelect` - visual mode for range comments
 - `ThemePicker` - runtime `:theme` picker (`src/app/theme_picker.rs`, `src/ui/theme_picker.rs`): `j`/`k` live-previews a theme by reassigning `App::theme` (cheap, no extra invalidation — every renderer reads `&app.theme` per frame); `/` opens a filter draft (same shape as the file tree's `i`/`e`/`/` prompts, committed on `Enter`, discarded on `Esc` without touching the applied filter); `Enter` on the picker keeps the preview for the session — like every other `:set`/`:vim`/`:wrap` toggle it never writes `config.toml`; `Esc` on the picker reverts to a `Theme` snapshot taken on entry (`Theme` has a manual `Clone` impl since its `OnceLock` syntax-highlighter cache isn't `Clone`) `:theme <name>` applies directly without opening the picker.
+- `FilePicker` - fuzzy file picker modal (`src/app/file_picker.rs`, `src/ui/file_picker.rs`): opened via `<leader><leader>`, `Ctrl-P`, `<leader>p`, or `:files`; dynamically matches input query against all review files using fuzzy subsequence scoring, highlights matched character positions, supports `↑`/`↓` and `Ctrl-j`/`Ctrl-k` navigation, `Enter` jumps to selected file, `Esc`/`Ctrl-c` cancels.
 
 **ReviewSession** (`src/model/review.rs`):
 

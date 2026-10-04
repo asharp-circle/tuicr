@@ -18,6 +18,7 @@ Full reference. Press `?` inside tuicr for an in-app version of this list.
 | `{N}G` | Go to source line N in current file |
 | `{N}{motion}` | Vim-style count prefix — repeats `j` / `k` / `h` / `l` / `{` / `}` / `[` / `]` `N` times |
 | `{` / `}` | Jump to previous / next file |
+| `Ctrl-p` / `<leader><leader>` | Open fuzzy file picker modal to quickly jump to any review file (also `:files`, `<leader>p`) |
 | `[` / `]` | Jump to previous / next hunk |
 | `m` / `M` | Jump to next / previous comment |
 | `/` | Search within diff (case-insensitive); matches on diff content are highlighted and the status bar shows the `[current/total]` position (headers, comments, and PR info are searchable but not highlighted) |
@@ -116,6 +117,20 @@ considers files that pass the active filters.
 | `<leader>e` | Toggle file list visibility |
 | `<leader>s` | Toggle commit selector visibility (also `:set commits!`) |
 | `Enter` | Select file (when file list is focused) |
+
+## File picker modal
+
+Opened with `<leader><leader>`, `Ctrl-p`, `<leader>p`, or `:files`. Interactive fuzzy search over all diff files in the review.
+
+| Key | Action |
+|-----|--------|
+| Type characters | Filter files dynamically with fuzzy subsequence matching |
+| `↓` / `Ctrl-j` / `Ctrl-n` | Move selection down |
+| `↑` / `Ctrl-k` / `Ctrl-p` | Move selection up |
+| `Backspace` | Delete last query character |
+| `Ctrl-u` | Clear search query |
+| `Enter` | Jump to selected file in the diff |
+| `Esc` / `Ctrl-c` | Close picker modal without jumping |
 
 ## Comment navigator
 
@@ -217,6 +232,7 @@ In command mode,
 | `:copy-url` | Copy the open PR URL to clipboard (PR mode) |
 | `:summary` | Show all pending local-draft comments; `j`/`k` select and `Enter` jumps |
 | `:diff` | Toggle diff view (unified / side-by-side) |
+| `:files` | Open the fuzzy file picker modal (navigate files; fuzzy matches as you type, `↑`/`↓` or `C-j`/`C-k` move, `Enter` jumps, `Esc` cancels) |
 | `:theme` | Open the runtime theme picker (live preview; `/` filters, `Enter` applies and saves, `Esc` reverts) |
 | `:theme <name>` | Apply and save `<name>` directly, without opening the picker |
 | `:focus` (`:f`) | Toggle single-file view |

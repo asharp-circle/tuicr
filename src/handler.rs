@@ -97,6 +97,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
     CommandSpec::new(&["submit draft"], CommandKind::Submit(SubmitEvent::Draft)),
     CommandSpec::new(&["summary"], CommandKind::Summary),
     CommandSpec::new(&["theme"], CommandKind::ThemePicker),
+    CommandSpec::new(&["files"], CommandKind::FilePicker),
     CommandSpec::new(
         &["comments unresolved"],
         CommandKind::Comments(PrCommentsVisibility::Unresolved),
@@ -162,6 +163,7 @@ enum CommandKind {
     Submit(SubmitEvent),
     Comments(PrCommentsVisibility),
     ThemePicker,
+    FilePicker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,6 +196,9 @@ pub fn handle_mouse_event(app: &mut App, event: MouseEvent) {
                 InputMode::Summary => handle_summary_action(app, action),
                 InputMode::ThemePicker => {
                     app.move_theme_picker_selection(if scroll_up { -1 } else { 1 });
+                }
+                InputMode::FilePicker => {
+                    app.move_file_picker_selection(if scroll_up { -1 } else { 1 });
                 }
                 InputMode::CommitSelect | InputMode::Normal if over_commit_list => {
                     wheel_commit_list(app, scroll_up);
@@ -924,6 +929,11 @@ fn dispatch_command(app: &mut App, kind: CommandKind) -> CommandAfterDispatch {
             app.enter_theme_picker_mode();
             CommandAfterDispatch::KeepMode
         }
+        CommandKind::FilePicker => {
+            app.exit_command_mode();
+            app.enter_file_picker_mode();
+            CommandAfterDispatch::KeepMode
+        }
         CommandKind::Version => {
             app.set_message(format!("tuicr v{}", env!("CARGO_PKG_VERSION")));
             CommandAfterDispatch::ExitCommandMode
@@ -1583,6 +1593,22 @@ fn handle_theme_picker_filter_action(app: &mut App, action: Action) {
     }
 }
 
+/// Handle actions in `InputMode::FilePicker`.
+pub fn handle_file_picker_action(app: &mut App, action: Action) {
+    match action {
+        Action::CursorDown(n) => app.move_file_picker_selection(n as isize),
+        Action::CursorUp(n) => app.move_file_picker_selection(-(n as isize)),
+        Action::InsertChar(c) => app.file_picker_insert_char(c),
+        Action::Paste(s) => app.file_picker_paste(&s),
+        Action::DeleteChar => app.file_picker_delete_char(),
+        Action::ClearLine => app.file_picker_clear_query(),
+        Action::SubmitInput => app.confirm_file_picker(),
+        Action::ExitMode => app.cancel_file_picker(),
+        Action::Quit => app.should_quit = true,
+        _ => {}
+    }
+}
+
 /// Handle actions when the comment navigator panel is focused
 pub fn handle_comment_navigator_action(app: &mut App, action: Action) {
     match action {
@@ -1853,6 +1879,7 @@ fn handle_shared_normal_action(app: &mut App, action: Action) {
             }
         }
         Action::EditFile => app.queue_editor_for_focused_item(),
+        Action::OpenFilePicker => app.enter_file_picker_mode(),
         _ => {}
     }
 }

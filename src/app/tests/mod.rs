@@ -8,6 +8,7 @@ mod diff_source_tests;
 mod diff_watch_tests;
 mod expand_gap_tests;
 mod file_filter_tests;
+mod file_picker_tests;
 mod find_source_line_tests;
 mod persistence_merge_tests;
 mod pr_info_tests;
