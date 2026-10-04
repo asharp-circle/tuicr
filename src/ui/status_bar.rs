@@ -71,51 +71,6 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             .add_modifier(Modifier::BOLD),
     );
 
-    // Right-cluster: source/context chunks, bullet-separated. PR mode leads
-    // with a `PR Mode` tag; otherwise we show `<vcs>:<branch> · <source>`.
-    let mut chunks: Vec<String> = Vec::new();
-    if in_pr_mode {
-        chunks.push("PR Mode".to_string());
-    } else {
-        let vcs_type = &app.vcs_info.vcs_type;
-        let branch = app.vcs_info.branch_name.as_deref().unwrap_or("detached");
-        chunks.push(format!("{vcs_type}:{branch}"));
-    }
-    if let Some(source) = header_source_chunk(app) {
-        chunks.push(source);
-    }
-    if app.is_single_file_view {
-        chunks.push("FOCUS".to_string());
-    }
-    if let Some(slug) = app.session_slug() {
-        chunks.push(slug);
-    }
-    if app.is_pristine_mode {
-        // The pristine session key has shape `pristine:<head_or_none>:<hash>`,
-        // so the middle segment is the short SHA of the HEAD we're reviewing.
-        // "none" renders as `uncommitted` so empty repos read sensibly. A
-        // missing prefix falls back to `?` rather than crashing the chip.
-        let head_label = app
-            .vcs_info
-            .head_commit
-            .strip_prefix("pristine:")
-            .and_then(|rest| rest.split(':').next())
-            .map(|raw| if raw == "none" { "uncommitted" } else { raw })
-            .unwrap_or("?");
-        chunks.push(format!(
-            "PRISTINE \u{00b7} {} \u{00b7} {} files",
-            head_label,
-            app.diff_files.len()
-        ));
-    }
-    let source_text = if chunks.is_empty() {
-        String::new()
-    } else {
-        format!(" {} ", chunks.join(" \u{00b7} "))
-    };
-    let source_width = source_text.chars().count();
-    let source_span = Span::styled(source_text, Style::default().fg(theme.fg_secondary));
-
     let (update_span, update_width) = match app.update_info.as_ref() {
         Some(info) if info.update_available => {
             let text = format!(" v{} available ", info.latest_version);
@@ -167,35 +122,137 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         (Vec::new(), 0)
     };
 
-    let right_width = source_width + stat_width + update_width;
+    // In PR mode, the session slug (e.g. `gh:owner/repo/pr/123`) is redundant with
+    // the PR identifier (`owner/repo#123`), so omit it to save horizontal space.
+    let include_slug = !in_pr_mode;
 
-    let (file_span, file_width) = if sole {
-        let label = if app.is_cursor_in_overview() || app.current_file_path().is_none() {
-            "Overview".to_string()
+    // Helper closure to assemble right-cluster chunks given an optional PR title limit.
+    let build_chunks = |title_limit: Option<usize>| -> Vec<String> {
+        let mut chunks = Vec::new();
+        if in_pr_mode {
+            chunks.push("PR Mode".to_string());
         } else {
-            app.current_file_path()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default()
-        };
-        // Leave a two-column minimum gap between the file name and the right
-        // cluster; truncate the path (keeping the basename) to whatever fits.
-        let avail = total_width.saturating_sub(brand_width + right_width + 2);
-        let label = crate::ui::diff_view::truncate_path_smart(&label, avail);
-        let text = format!(" {label} ");
-        let width = text.chars().count();
-        (
-            Some(Span::styled(
+            let vcs_type = &app.vcs_info.vcs_type;
+            let branch = app.vcs_info.branch_name.as_deref().unwrap_or("detached");
+            chunks.push(format!("{vcs_type}:{branch}"));
+        }
+        if let Some(source) = header_source_chunk_with_title_limit(app, title_limit) {
+            chunks.push(source);
+        }
+        if app.is_single_file_view {
+            chunks.push("FOCUS".to_string());
+        }
+        if include_slug {
+            if let Some(slug) = app.session_slug() {
+                chunks.push(slug);
+            }
+        }
+        if app.is_pristine_mode {
+            // The pristine session key has shape `pristine:<head_or_none>:<hash>`,
+            // so the middle segment is the short SHA of the HEAD we're reviewing.
+            // "none" renders as `uncommitted` so empty repos read sensibly. A
+            // missing prefix falls back to `?` rather than crashing the chip.
+            let head_label = app
+                .vcs_info
+                .head_commit
+                .strip_prefix("pristine:")
+                .and_then(|rest| rest.split(':').next())
+                .map(|raw| if raw == "none" { "uncommitted" } else { raw })
+                .unwrap_or("?");
+            chunks.push(format!(
+                "PRISTINE \u{00b7} {} \u{00b7} {} files",
+                head_label,
+                app.diff_files.len()
+            ));
+        }
+        chunks
+    };
+
+    // Calculate baseline right-cluster width without a PR title (title_limit = Some(0)).
+    let base_chunks = build_chunks(if in_pr_mode { Some(0) } else { None });
+    let base_source_width = if base_chunks.is_empty() {
+        0
+    } else {
+        base_chunks.iter().map(|c| c.chars().count()).sum::<usize>()
+            + (base_chunks.len().saturating_sub(1) * 3)
+            + 2
+    };
+    let base_right_width = base_source_width + stat_width + update_width;
+
+    // Available space between the brand and the baseline right cluster (with minimum 2-cell gap).
+    let avail_between = total_width.saturating_sub(brand_width + base_right_width + 2);
+
+    let file_path_label = if sole {
+        if app.is_cursor_in_overview() || app.current_file_path().is_none() {
+            Some("Overview".to_string())
+        } else {
+            app.current_file_path().map(|p| p.display().to_string())
+        }
+    } else {
+        None
+    };
+
+    let (file_span, file_width, final_title_limit) = if let Some(ref raw_label) = file_path_label {
+        let label_len = raw_label.chars().count();
+        let needed_file_width = label_len + 2;
+
+        if avail_between >= needed_file_width {
+            // Full file path fits! File path is given layout priority.
+            let leftover = avail_between - needed_file_width;
+            let title_limit = if in_pr_mode && leftover >= 13 {
+                Some((leftover - 3).min(60))
+            } else {
+                Some(0)
+            };
+            let text = format!(" {raw_label} ");
+            let width = text.chars().count();
+            let span = Span::styled(
                 text,
                 Style::default()
                     .fg(theme.fg_secondary)
                     .add_modifier(Modifier::BOLD),
-            )),
-            width,
-        )
+            );
+            (Some(span), width, title_limit)
+        } else {
+            // Full file path does not fit in avail_between: omit PR title so file path gets
+            // maximum room.
+            let avail_for_path = avail_between.saturating_sub(2);
+            let truncated = crate::ui::diff_view::truncate_path_smart(raw_label, avail_for_path);
+            let text = format!(" {truncated} ");
+            let width = text.chars().count();
+            let span = Span::styled(
+                text,
+                Style::default()
+                    .fg(theme.fg_secondary)
+                    .add_modifier(Modifier::BOLD),
+            );
+            (Some(span), width, Some(0))
+        }
     } else {
-        (None, 0)
+        // File list sidebar is visible (diff is not sole pane): no file name in header.
+        let title_limit = if in_pr_mode {
+            let avail_for_title = avail_between.saturating_sub(3);
+            if avail_for_title >= 10 {
+                Some(avail_for_title.min(60))
+            } else {
+                Some(0)
+            }
+        } else {
+            None
+        };
+        (None, 0, title_limit)
     };
 
+    let chunks = build_chunks(final_title_limit);
+    let source_text = if chunks.is_empty() {
+        String::new()
+    } else {
+        format!(" {} ", chunks.join(" \u{00b7} "))
+    };
+    let source_width = source_text.chars().count();
+    let source_span = Span::styled(source_text, Style::default().fg(theme.fg_secondary));
+
+    let right_width = source_width + stat_width + update_width;
     let pad_width = total_width.saturating_sub(brand_width + file_width + right_width);
 
     let mut spans = vec![brand];
@@ -239,7 +296,15 @@ fn with_head_commit(label: &str, app: &App) -> String {
 /// Short, lowercase description of the active review source, including the
 /// commit it is diffed against. Returns `None` only when there is nothing to
 /// add beyond `vcs:branch`, which now means an empty repository.
+#[cfg(test)]
 fn header_source_chunk(app: &App) -> Option<String> {
+    header_source_chunk_with_title_limit(app, Some(60))
+}
+
+fn header_source_chunk_with_title_limit(
+    app: &App,
+    max_title_len: Option<usize>,
+) -> Option<String> {
     match &app.diff_source {
         // The working-tree family all diff against HEAD but never named it, so
         // the commit under review was only visible via `-r <sha>`. The
@@ -270,16 +335,22 @@ fn header_source_chunk(app: &App) -> Option<String> {
         }
         DiffSource::PullRequest(pr) => {
             let slug = pr.key.repository.display_name();
-            let trimmed_title = if pr.title.chars().count() > 60 {
-                let truncated: String = pr.title.chars().take(59).collect();
-                format!("{truncated}\u{2026}")
+            let limit = max_title_len.unwrap_or(60);
+            let mut s = if limit == 0 || pr.title.is_empty() {
+                format!("{slug}#{number}", number = pr.key.number)
             } else {
-                pr.title.clone()
+                let trimmed_title = if pr.title.chars().count() > limit {
+                    let truncated: String =
+                        pr.title.chars().take(limit.saturating_sub(1)).collect();
+                    format!("{truncated}\u{2026}")
+                } else {
+                    pr.title.clone()
+                };
+                format!(
+                    "{slug}#{number} \u{00b7} {trimmed_title}",
+                    number = pr.key.number
+                )
             };
-            let mut s = format!(
-                "{slug}#{number} \u{00b7} {trimmed_title}",
-                number = pr.key.number
-            );
             if app.pr_commits.len() > 1
                 && let Some(summary) = app.commit_selection_summary()
             {
@@ -755,7 +826,11 @@ mod header_snapshot_tests {
     }
 
     fn draw_header(app: &App) -> Buffer {
-        let backend = TestBackend::new(140, 3);
+        draw_header_with_width(app, 140)
+    }
+
+    fn draw_header_with_width(app: &App, width: u16) -> Buffer {
+        let backend = TestBackend::new(width, 3);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
@@ -975,6 +1050,67 @@ mod header_snapshot_tests {
         assert!(line.contains("PR Mode"), "got: {line:?}");
         assert!(line.contains("Overview"), "got: {line:?}");
         assert!(line.contains("+0") && line.contains("-0"), "got: {line:?}");
+    }
+
+    fn make_test_diff_file(path: &str) -> DiffFile {
+        DiffFile {
+            old_path: None,
+            new_path: Some(PathBuf::from(path)),
+            status: FileStatus::Modified,
+            hunks: Vec::new(),
+            is_binary: false,
+            is_too_large: false,
+            is_commit_message: false,
+            content_hash: 0,
+        }
+    }
+
+    #[test]
+    fn should_omit_duplicate_session_slug_in_pr_mode() {
+        let app = build_pr_app(pr_source(false, false));
+        let buffer = draw_header(&app);
+        let line = row_text(&buffer, 0);
+
+        assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.contains("agavra/tuicr#125"), "got: {line:?}");
+        assert!(!line.contains("gh:agavra/tuicr/pr/125"), "got: {line:?}");
+    }
+
+    #[test]
+    fn should_prioritize_file_path_over_pr_title_when_diff_is_sole_pane() {
+        let mut app = build_pr_app(pr_source(false, false));
+        app.show_file_list = false;
+        app.diff_files = vec![make_test_diff_file(
+            "eventstrigger/src/main/java/com/circle/eventstrigger/controller/v1/TriggersController.java",
+        )];
+        app.diff_state.current_file_idx = 0;
+        assert!(app.is_diff_sole_pane());
+
+        // At width 120, there is not enough room for both the 80-char file path and full title.
+        // File path must be prioritized and visible, omitting/truncating the PR title.
+        let buffer = draw_header_with_width(&app, 120);
+        let line = row_text(&buffer, 0);
+
+        assert!(line.contains("TriggersController.java"), "got: {line:?}");
+        assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.contains("agavra/tuicr#125"), "got: {line:?}");
+        assert!(!line.contains("gh:agavra/tuicr/pr/125"), "got: {line:?}");
+    }
+
+    #[test]
+    fn should_show_full_path_and_pr_title_when_width_permits() {
+        let mut app = build_pr_app(pr_source(false, false));
+        app.show_file_list = false;
+        app.diff_files = vec![make_test_diff_file("src/main.rs")];
+        app.diff_state.current_file_idx = 0;
+
+        let buffer = draw_header_with_width(&app, 140);
+        let line = row_text(&buffer, 0);
+
+        assert!(line.contains("src/main.rs"), "got: {line:?}");
+        assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.contains("agavra/tuicr#125"), "got: {line:?}");
+        assert!(line.contains("Add forge-backed PR review"), "got: {line:?}");
     }
 
     #[test]
