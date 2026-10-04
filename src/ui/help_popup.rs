@@ -258,6 +258,13 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
         ]),
         Line::from(vec![
             Span::styled(
+                format!("  {leader}Q        "),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Close tuicr (warns on unsaved comments)"),
+        ]),
+        Line::from(vec![
+            Span::styled(
                 format!("  {leader}{leader} / C-p  "),
                 Style::default().add_modifier(Modifier::BOLD),
             ),

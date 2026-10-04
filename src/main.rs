@@ -605,62 +605,11 @@ fn main() -> anyhow::Result<()> {
                         // Otherwise fall through to normal handling
                     }
 
-                    // Handle pending leader command for panel focus, file list toggle, and review comments.
+                    // Handle pending leader command for panel focus, file list toggle, review comments, and quitting.
                     if pending_leader {
                         pending_leader = false;
-                        if key.code == crossterm::event::KeyCode::Char(app.leader_key) {
-                            app.enter_file_picker_mode();
+                        if handle_pending_leader_key(&mut app, key.code) {
                             continue;
-                        }
-                        match key.code {
-                            crossterm::event::KeyCode::Char('p') => {
-                                app.enter_file_picker_mode();
-                                continue;
-                            }
-                            crossterm::event::KeyCode::Char('e') => {
-                                app.toggle_file_list();
-                                continue;
-                            }
-                            crossterm::event::KeyCode::Char('h') => {
-                                app.focus_pane_left();
-                                continue;
-                            }
-                            crossterm::event::KeyCode::Char('l') => {
-                                app.focus_pane_right();
-                                continue;
-                            }
-                            crossterm::event::KeyCode::Char('k') => {
-                                if app.focused_panel == app::FocusedPanel::Comments {
-                                    app.focused_panel = app::FocusedPanel::FileList;
-                                } else if app.has_inline_commit_selector() {
-                                    app.focused_panel = app::FocusedPanel::CommitSelector;
-                                }
-                                continue;
-                            }
-                            crossterm::event::KeyCode::Char('j') => {
-                                if app.focused_panel == app::FocusedPanel::FileList
-                                    && app.has_comment_navigator_items()
-                                {
-                                    app.focused_panel = app::FocusedPanel::Comments;
-                                } else {
-                                    app.focused_panel = app::FocusedPanel::Diff;
-                                }
-                                continue;
-                            }
-                            crossterm::event::KeyCode::Char('c') => {
-                                app.enter_review_comment_mode();
-                                continue;
-                            }
-                            // `<leader>s` toggles the commit selector pane.
-                            crossterm::event::KeyCode::Char('s') => {
-                                app.toggle_commit_selector();
-                                continue;
-                            }
-                            crossterm::event::KeyCode::Char('f') => {
-                                app.toggle_single_file_view();
-                                continue;
-                            }
-                            _ => {}
                         }
                         // Otherwise fall through to normal handling
                     }
@@ -914,6 +863,73 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn handle_pending_leader_key(app: &mut App, key_code: crossterm::event::KeyCode) -> bool {
+    if key_code == crossterm::event::KeyCode::Char(app.leader_key) {
+        app.enter_file_picker_mode();
+        return true;
+    }
+    match key_code {
+        crossterm::event::KeyCode::Char('p') => {
+            app.enter_file_picker_mode();
+            true
+        }
+        crossterm::event::KeyCode::Char('e') => {
+            app.toggle_file_list();
+            true
+        }
+        crossterm::event::KeyCode::Char('h') => {
+            app.focus_pane_left();
+            true
+        }
+        crossterm::event::KeyCode::Char('l') => {
+            app.focus_pane_right();
+            true
+        }
+        crossterm::event::KeyCode::Char('k') => {
+            if app.focused_panel == FocusedPanel::Comments {
+                app.focused_panel = FocusedPanel::FileList;
+            } else if app.has_inline_commit_selector() {
+                app.focused_panel = FocusedPanel::CommitSelector;
+            }
+            true
+        }
+        crossterm::event::KeyCode::Char('j') => {
+            if app.focused_panel == FocusedPanel::FileList && app.has_comment_navigator_items() {
+                app.focused_panel = FocusedPanel::Comments;
+            } else {
+                app.focused_panel = FocusedPanel::Diff;
+            }
+            true
+        }
+        crossterm::event::KeyCode::Char('c') => {
+            app.enter_review_comment_mode();
+            true
+        }
+        // `<leader>s` toggles the commit selector pane.
+        crossterm::event::KeyCode::Char('s') => {
+            app.toggle_commit_selector();
+            true
+        }
+        crossterm::event::KeyCode::Char('f') => {
+            app.toggle_single_file_view();
+            true
+        }
+        crossterm::event::KeyCode::Char('Q') => {
+            if app.dirty && app.session.has_comments() && !app.quit_warned {
+                let leader = app.leader_key;
+                app.set_sticky_warning(format!("Unsaved changes. Press {leader}Q again to quit."));
+                app.quit_warned = true;
+            } else if app.dirty && !app.session.has_comments() {
+                app.discard_session_and_quit();
+            } else {
+                app.should_quit = true;
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 fn dispatch_action(app: &mut App, action: Action) {
     match app.input_mode {
         InputMode::Help | InputMode::MessageDetails => handle_help_action(app, action),
@@ -1144,5 +1160,99 @@ mod tests {
         assert!(should_probe_keyboard_enhancement(false, true));
         assert!(!should_probe_keyboard_enhancement(false, false));
         assert!(!should_probe_keyboard_enhancement(true, true));
+    }
+
+    fn test_app() -> App {
+        App::new(
+            tuicr::theme::Theme::dark(),
+            None,
+            false,
+            AppStartupOptions {
+                revisions: None,
+                working_tree: false,
+                path_filter: None,
+                file_path: None,
+                all_files: false,
+                show_pr_checks: false,
+                show_pr_comments: false,
+                pr_comments_visibility: None,
+                git_backend_preference: GitBackendPreference::Libgit2,
+                diff_whitespace_mode: DiffWhitespaceMode::Normal,
+                commit_selection: app::CommitSelectionStart::All,
+                pr_target: None,
+                repo_url_override: None,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn leader_shift_q_sets_should_quit_when_clean() {
+        let mut app = test_app();
+        assert!(!app.should_quit);
+        let handled = handle_pending_leader_key(&mut app, crossterm::event::KeyCode::Char('Q'));
+        assert!(handled);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn leader_shift_q_warns_when_unsaved_comments_exist() {
+        let mut app = test_app();
+        let path = std::path::PathBuf::from("src/main.rs");
+        app.session
+            .add_file(path.clone(), tuicr::model::FileStatus::Modified, 0);
+        app.session
+            .get_file_mut(&path)
+            .unwrap()
+            .add_file_comment(tuicr::model::Comment::new(
+                "needs work".to_string(),
+                tuicr::model::CommentType::None,
+                None,
+            ));
+        app.dirty = true;
+        assert!(app.session.has_comments());
+        assert!(!app.quit_warned);
+        assert!(!app.should_quit);
+
+        // First press warns and does not quit
+        let handled = handle_pending_leader_key(&mut app, crossterm::event::KeyCode::Char('Q'));
+        assert!(handled);
+        assert!(!app.should_quit);
+        assert!(app.quit_warned);
+        assert_eq!(
+            app.message.as_ref().map(|m| m.content.as_str()),
+            Some("Unsaved changes. Press ;Q again to quit.")
+        );
+
+        // Second press confirms quit
+        let handled_again =
+            handle_pending_leader_key(&mut app, crossterm::event::KeyCode::Char('Q'));
+        assert!(handled_again);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn leader_shift_q_discards_when_only_reviewed_files_dirty() {
+        let mut app = test_app();
+        let path = std::path::PathBuf::from("src/main.rs");
+        app.session
+            .add_file(path.clone(), tuicr::model::FileStatus::Modified, 0);
+        app.session.get_file_mut(&path).unwrap().reviewed = true;
+        app.dirty = true;
+        assert!(!app.session.has_comments());
+
+        let handled = handle_pending_leader_key(&mut app, crossterm::event::KeyCode::Char('Q'));
+        assert!(handled);
+        assert!(app.should_quit);
+        assert!(!app.dirty);
+    }
+
+    #[test]
+    fn unhandled_leader_key_returns_false() {
+        let mut app = test_app();
+        assert!(!handle_pending_leader_key(
+            &mut app,
+            crossterm::event::KeyCode::Char('z')
+        ));
     }
 }
