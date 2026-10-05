@@ -75,7 +75,7 @@ src/
 │   │   ├── models.rs    # JSON parsing for `gh` REST + GraphQL responses
 │   │   ├── pr_info.rs   # Extended `gh pr view --json` parsing for PR description panel
 │   │   ├── review_threads.rs # GraphQL query for existing review threads
-│   │   ├── review_metadata.rs # GraphQL review commit metadata for since-last-review scoping
+│   │   ├── review_metadata.rs # GraphQL review commit metadata for reviewed-commit markers
 │   │   └── submit.rs    # build_review_payload, create_review wiring
 │   ├── gitlab/          # GitLab backend via `glab` CLI
 │   │   ├── mod.rs       # GitLabGlabBackend export
@@ -267,7 +267,7 @@ Forge selection is host-driven: `parse_any_remote_url` tries Bitbucket (`bitbuck
 - `get_pull_request_info` — extended PR metadata for the description panel (`PullRequestInfo`). GitHub fetches `reviewDecision`, `mergeable`, `mergeStateStatus`, `reviewRequests`, `latestReviews`, and `statusCheckRollup` in the same `gh pr view` call; other backends default to `PullRequestInfo::from_details`.
 - `get_pull_request_diff` — cumulative PR changes as structured `FilePatch` values. Each forge obtains path/status metadata from its API and pairs it with patch bodies without decoding display headers.
 - `list_pull_request_commits` — commits on the PR for the inline subset selector.
-- `list_pull_request_review_metadata` — best-effort viewer login + review commit OIDs used to preselect commits since the viewer's latest submitted review and mark already-reviewed commits in the inline selector.
+- `list_pull_request_review_metadata` — best-effort viewer login + review commit OIDs used to mark already-reviewed commits in the inline selector. PRs always open with all commits selected; users narrow the scope manually.
   GitHub uses review metadata; GitLab combines `/user`, MR diff versions, approvals, and discussions; Bitbucket reads the PR's `participants` and reports account UUIDs (Cloud returns no usernames), with no commit OIDs since it does not record which commit an approval covered.
 - `get_pull_request_commit_range_diff` — structured cumulative changes for a contiguous subrange (`start_sha` is the parent of the first selected commit; `end_sha` is the last).
 - `list_review_threads` — existing forge comments + resolved/outdated state.

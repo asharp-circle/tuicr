@@ -438,12 +438,15 @@ impl App {
         repo_url_override: Option<ForgeRepository>,
     ) -> Result<Self> {
         let persisted_session_snapshot = session.clone();
-        // Ensure all diff files are registered in the session. Persisted PR
-        // subsets hydrate through the full PR diff first; keep subset-specific
-        // hunk keys alive until the selected diff is loaded.
-        let preserve_hunks = matches!(diff_source, DiffSource::PullRequest(_))
-            && session.commit_selection_range.is_some();
-        Self::register_diff_files(&mut session, &diff_files, preserve_hunks);
+        // PR reviews open on the full diff, regardless of the previous selection.
+        if matches!(diff_source, DiffSource::PullRequest(_)) {
+            session.commit_selection_range = None;
+        }
+        Self::register_diff_files(
+            &mut session,
+            &diff_files,
+            matches!(diff_source, DiffSource::PullRequest(_)),
+        );
 
         let has_more_commit = commit_list.len() >= VISIBLE_COMMIT_COUNT;
         let visible_commit_count = if commit_list.is_empty() {
@@ -1001,22 +1004,12 @@ impl App {
         app.current_pr_head = Some(details_for_threads.head_sha.clone());
         app.commit_selection_start = commit_selection;
         app.pr_viewer_login = review_metadata.viewer_login.clone();
-        let since_last_review_message =
-            app.apply_pr_commit_selector(commits_for_selector, review_metadata);
-        if matches!(&app.diff_source, DiffSource::PullRequest(_))
-            && let Some(range) = app.commit_selection_range
-            && !app.pr_commits.is_empty()
-            && (range.0 > 0 || range.1 + 1 < app.pr_commits.len())
-        {
-            app.spawn_pr_range_reload();
-        }
+        app.apply_pr_commit_selector(commits_for_selector, review_metadata);
         if let DiffSource::PullRequest(pr) = &app.diff_source.clone()
             && pr.is_read_only()
         {
             let reason = pr.read_only_reason().unwrap_or("read only");
             app.set_warning(format!("This PR is {reason} — review is read-only"));
-        } else if let Some(message) = since_last_review_message {
-            app.set_message(message);
         }
         // Spawn thread-fetch on startup; the main event loop will drain
         // the receiver via `poll_pr_threads_events` once it begins.

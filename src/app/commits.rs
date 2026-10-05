@@ -1,7 +1,7 @@
 use super::*;
 
 impl App {
-    /// The commit-selection range a fresh multi-commit review opens with,
+    /// The commit-selection range a fresh local multi-commit review opens with,
     /// honoring the `initial_commit_selection` config. `review_commits` is stored
     /// newest-first, so the oldest commit is the last index — that stays true
     /// regardless of the `commit_order` display setting (which is presentation
@@ -30,13 +30,13 @@ impl App {
         &mut self,
         commits: Vec<crate::forge::traits::PullRequestCommit>,
         review_metadata: crate::forge::traits::PullRequestReviewMetadata,
-    ) -> Option<String> {
+    ) {
+        self.session.commit_selection_range = None;
         self.pr_last_reviewed_commit_index = None;
         if commits.len() <= 1 {
-            return None;
+            return;
         }
 
-        let since_last_review = commits_since_last_review_selection(&commits, &review_metadata);
         self.set_pr_last_reviewed_commit_from_metadata(&commits, &review_metadata);
 
         self.pr_commits = commits.clone();
@@ -49,50 +49,8 @@ impl App {
         self.has_more_commit = false;
         self.show_commit_selector = true;
 
-        let mut range = (0, mapped.len() - 1);
-        let mut auto_scoped_since_last_review = false;
-        let mut since_last_review_message = None;
-        // Restore any persisted range scoped to this head SHA. If the
-        // restored range exceeds the current commit count (e.g., the PR
-        // was rebased), fall back to "all". A valid persisted range wins over
-        // both the `initial_commit_selection = oldest` opt-in and the
-        // since-last-review auto-scoping; `oldest` in turn takes precedence
-        // over since-last-review.
-        if let Some(persisted) = self.session.commit_selection_range
-            && persisted.1 < mapped.len()
-            && persisted.0 <= persisted.1
-        {
-            range = persisted;
-        } else if self.commit_selection_start == CommitSelectionStart::Oldest {
-            if let Some(oldest) =
-                Self::initial_commit_range(CommitSelectionStart::Oldest, mapped.len())
-            {
-                range = oldest;
-            }
-        } else if self.session.commit_selection_range.is_none()
-            && let Some(selection) = since_last_review.as_ref()
-        {
-            if let Some(selected_range) = selection.range {
-                range = selected_range;
-                auto_scoped_since_last_review = true;
-            }
-            since_last_review_message = Some(selection.message.clone());
-        }
-
-        self.commit_selection_range = Some(range);
+        self.commit_selection_range = Some((0, mapped.len() - 1));
         self.review_commits = mapped;
-
-        if let Some(message) = since_last_review_message {
-            if auto_scoped_since_last_review
-                && Self::is_strict_commit_selection(Some(range), self.pr_commits.len())
-            {
-                self.focused_panel = FocusedPanel::CommitSelector;
-                self.commit_list_cursor = self.pr_commits.len().saturating_sub(1);
-                self.commit_list_scroll_offset = self.commit_list_cursor.saturating_sub(5);
-            }
-            return Some(message);
-        }
-        None
     }
 
     pub fn commit_list_idx_at_screen_row(&self, screen_row: u16) -> Option<usize> {
@@ -776,8 +734,7 @@ impl App {
         review_metadata: &crate::forge::traits::PullRequestReviewMetadata,
     ) {
         self.pr_last_reviewed_commit_index = if commits.len() > 1 {
-            commits_since_last_review_selection(commits, review_metadata)
-                .map(|selection| selection.reviewed_index)
+            last_reviewed_pr_commit_index(commits, review_metadata)
         } else {
             None
         };
@@ -1120,14 +1077,13 @@ impl App {
 
     /// Reload the inline commit subrange diff via the backend appropriate for
     /// the current review. PR reviews route through the forge `compare` API
-    /// (persisting the narrowed range so it survives a restart); local reviews
+    /// for the current session; local reviews
     /// reload straight from the VCS. Callers that adjust the selection (toggle,
     /// `(`/`)` cycling, restore-on-exit) must go through here so PR reviews
     /// don't fall into the VCS path — the forge backend has no commit-range
     /// diff support and would error with "Commit range diff not supported".
     pub fn reload_inline_selection_for_source(&mut self) -> Result<()> {
         if matches!(self.diff_source, DiffSource::PullRequest(_)) {
-            self.persist_pr_commit_selection_range();
             self.reload_pr_inline_selection();
             Ok(())
         } else {

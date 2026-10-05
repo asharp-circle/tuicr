@@ -95,13 +95,10 @@ impl App {
         // match the local-mode UX. We mirror `commit_list` and
         // `review_commits` into shared App state so the existing
         // inline_commit_selector renderer Just Works.
-        let since_last_review_message = self.apply_pr_commit_selector(commits, review_metadata);
+        self.apply_pr_commit_selector(commits, review_metadata);
 
-        // Ensure session has all files registered after the swap. A strict
-        // selector range is a filtered view, not a new review scope.
-        let preserve_hunks =
-            Self::is_strict_commit_selection(self.commit_selection_range, self.pr_commits.len());
-        Self::register_diff_files(&mut self.session, &self.diff_files, preserve_hunks);
+        // Keep hunk marks from manually selected subsets across PR opens.
+        Self::register_diff_files(&mut self.session, &self.diff_files, true);
 
         self.sort_files_by_directory(true);
         self.expand_all_dirs();
@@ -109,18 +106,6 @@ impl App {
 
         if let Some(reason) = read_only_reason {
             self.set_warning(format!("This PR is {reason} — review is read-only"));
-        } else if let Some(message) = since_last_review_message {
-            self.set_message(message);
-        }
-
-        // If the restored selection is a strict subset, fire an initial
-        // range re-fetch so the diff matches the persisted scope.
-        if matches!(&self.diff_source, DiffSource::PullRequest(_))
-            && let Some(range) = self.commit_selection_range
-            && !self.pr_commits.is_empty()
-            && (range.0 > 0 || range.1 + 1 < self.pr_commits.len())
-        {
-            self.spawn_pr_range_reload();
         }
 
         Ok(())
@@ -217,23 +202,6 @@ impl App {
         // it the viewport snaps back to the top of the diff after the
         // reload.
         self.move_cursor_to_annotation(target);
-    }
-
-    /// Persist the active inline selection on the session (PR mode only).
-    /// `None` is written when the range covers all commits so re-open
-    /// doesn't trigger an unnecessary subset re-fetch.
-    pub fn persist_pr_commit_selection_range(&mut self) {
-        if !matches!(self.diff_source, DiffSource::PullRequest(_)) {
-            return;
-        }
-        let total = self.pr_commits.len();
-        let value = match self.commit_selection_range {
-            Some((s, e)) if total > 0 && (s > 0 || e + 1 < total) => Some((s, e)),
-            _ => None,
-        };
-        self.session.commit_selection_range = value;
-        self.session.updated_at = chrono::Utc::now();
-        let _ = self.save_current_session_merging_external();
     }
 
     /// Resolve the active inline selection (PR mode) to (start_sha,
