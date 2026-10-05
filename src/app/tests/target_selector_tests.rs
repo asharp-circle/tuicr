@@ -651,7 +651,7 @@ fn review_metadata(reviews: Vec<PullRequestReviewRecord>) -> PullRequestReviewMe
 }
 
 #[test]
-fn should_select_commits_since_viewers_last_review() {
+fn should_find_viewers_last_reviewed_commit() {
     let commits = vec![
         sample_pr_commit("c3", "third"),
         sample_pr_commit("c2", "second"),
@@ -663,18 +663,13 @@ fn should_select_commits_since_viewers_last_review() {
         review_record("ronen-hoffer", "c2", "2026-06-03T10:00:00Z"),
     ]);
 
-    let selection = commits_since_last_review_selection(&commits, &metadata).unwrap();
+    let selection = last_reviewed_pr_commit_index(&commits, &metadata).unwrap();
 
-    assert_eq!(selection.range, Some((0, 0)));
-    assert_eq!(selection.reviewed_index, 1);
-    assert_eq!(
-        selection.message,
-        "Showing 1 commit since your last review — press Enter to see all"
-    );
+    assert_eq!(selection, 1);
 }
 
 #[test]
-fn should_report_no_new_commits_when_viewers_last_review_is_at_head() {
+fn should_find_last_reviewed_commit_at_head() {
     let commits = vec![
         sample_pr_commit("c3", "third"),
         sample_pr_commit("c2", "second"),
@@ -685,15 +680,13 @@ fn should_report_no_new_commits_when_viewers_last_review_is_at_head() {
         "2026-06-03T10:00:00Z",
     )]);
 
-    let selection = commits_since_last_review_selection(&commits, &metadata).unwrap();
+    let selection = last_reviewed_pr_commit_index(&commits, &metadata).unwrap();
 
-    assert_eq!(selection.range, None);
-    assert_eq!(selection.reviewed_index, 0);
-    assert_eq!(selection.message, "No commits since your last review");
+    assert_eq!(selection, 0);
 }
 
 #[test]
-fn should_skip_since_last_review_selection_when_commit_is_missing() {
+fn should_skip_last_reviewed_commit_when_missing() {
     let commits = vec![sample_pr_commit("c3", "third")];
     let metadata = review_metadata(vec![review_record(
         "ronen-hoffer",
@@ -701,13 +694,14 @@ fn should_skip_since_last_review_selection_when_commit_is_missing() {
         "2026-06-03T10:00:00Z",
     )]);
 
-    assert!(commits_since_last_review_selection(&commits, &metadata).is_none());
+    assert!(last_reviewed_pr_commit_index(&commits, &metadata).is_none());
 }
 
 #[test]
-fn should_preserve_persisted_commit_range_over_since_last_review_default() {
+fn should_open_all_pr_commits_despite_persisted_range_and_oldest_default() {
     let mut app = build_app();
     app.session.commit_selection_range = Some((1, 1));
+    app.commit_selection_start = CommitSelectionStart::Oldest;
     let commits = vec![
         sample_pr_commit("c3", "third"),
         sample_pr_commit("c2", "second"),
@@ -719,12 +713,37 @@ fn should_preserve_persisted_commit_range_over_since_last_review_default() {
         "2026-06-03T10:00:00Z",
     )]);
 
-    let message = app.apply_pr_commit_selector(commits, metadata);
+    app.apply_pr_commit_selector(commits, metadata);
 
-    assert_eq!(app.commit_selection_range, Some((1, 1)));
+    assert_eq!(app.commit_selection_range, Some((0, 2)));
     assert_eq!(app.pr_last_reviewed_commit_index, Some(1));
-    assert!(message.is_none());
+    assert_eq!(app.session.commit_selection_range, None);
     assert_eq!(app.focused_panel, FocusedPanel::Diff);
+}
+
+#[test]
+fn should_open_all_pr_commits_regardless_of_last_review() {
+    for reviewed_oid in ["c2", "c3", "gone"] {
+        let mut app = build_app();
+        let commits = vec![
+            sample_pr_commit("c3", "third"),
+            sample_pr_commit("c2", "second"),
+            sample_pr_commit("c1", "first"),
+        ];
+        let metadata = review_metadata(vec![review_record(
+            "ronen-hoffer",
+            reviewed_oid,
+            "2026-06-03T10:00:00Z",
+        )]);
+
+        app.apply_pr_commit_selector(commits, metadata);
+
+        assert_eq!(app.commit_selection_range, Some((0, 2)));
+        assert_eq!(app.review_commits.len(), 3);
+        assert_eq!(app.visible_commit_count, 3);
+        assert!(app.show_commit_selector);
+        assert_eq!(app.focused_panel, FocusedPanel::Diff);
+    }
 }
 
 #[test]
@@ -1166,6 +1185,49 @@ fn should_load_persisted_pr_session_when_reopening_same_head() {
     assert!(stable_review.reviewed);
     assert_eq!(stable_review.file_comments.len(), 1);
     assert_eq!(stable_review.file_comments[0].content, "persisted draft");
+}
+
+#[test]
+fn should_reopen_all_pr_commits_without_losing_subset_hunk_marks() {
+    let _reviews = TestReviewsDir::new();
+    let summary = sample_pr(424256, "subset-hunks");
+    let details = test_pr_details(424256, "subset-hunks");
+    let commits = vec![
+        sample_pr_commit("c3", "third"),
+        sample_pr_commit("c2", "second"),
+        sample_pr_commit("c1", "first"),
+    ];
+    let make_backend = || {
+        let mut backend =
+            FakeForgeBackend::open_pr_details(details.clone(), two_file_patch("new changed"));
+        backend.commits = commits.clone();
+        Box::new(backend)
+    };
+    let path = PathBuf::from("src/stable.rs");
+    let mut app = build_app();
+    app.open_pr_with_backend(&summary, make_backend(), None)
+        .unwrap();
+    app.session.commit_selection_range = Some((1, 1));
+    app.session
+        .get_file_mut(&path)
+        .unwrap()
+        .reviewed_hunks
+        .insert("subset-only-hunk".to_string());
+    crate::persistence::save_session(&app.session).unwrap();
+
+    let mut reopened = build_app();
+    reopened
+        .open_pr_with_backend(&summary, make_backend(), None)
+        .unwrap();
+
+    assert_eq!(reopened.commit_selection_range, Some((0, 2)));
+    assert_eq!(reopened.session.commit_selection_range, None);
+    assert!(
+        reopened.session.files[&path]
+            .reviewed_hunks
+            .contains("subset-only-hunk")
+    );
+    assert!(reopened.pr_range_reload_rx.is_none());
 }
 
 #[test]

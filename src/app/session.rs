@@ -580,13 +580,9 @@ impl App {
         // Re-register diff files against the loaded session so any new files
         // in the PR appear with content_hash tracking, and any deleted files
         // simply stop appearing in the file list.
-        // Strict subset sessions are reloaded through a full PR diff first, so
-        // pruning here would discard hunk keys hidden by the active selector.
-        let preserve_hunks = Self::is_strict_commit_selection(
-            persisted.commit_selection_range,
-            opened.commits.len(),
-        );
-        Self::register_diff_files(&mut persisted, &opened.diff_files, preserve_hunks);
+        // A previous manual subset may have hunk marks absent from the full diff.
+        Self::register_diff_files(&mut persisted, &opened.diff_files, true);
+        persisted.commit_selection_range = None;
         Ok(Some(ReviewSession {
             pr_session_key: Some(key),
             diff_source: SessionDiffSource::PullRequest,

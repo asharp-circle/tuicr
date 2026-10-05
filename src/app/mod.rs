@@ -429,17 +429,10 @@ pub fn pr_commit_to_commit_info(commit: &crate::forge::traits::PullRequestCommit
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SinceLastReviewSelection {
-    range: Option<(usize, usize)>,
-    reviewed_index: usize,
-    message: String,
-}
-
-fn commits_since_last_review_selection(
+fn last_reviewed_pr_commit_index(
     commits_newest_first: &[crate::forge::traits::PullRequestCommit],
     review_metadata: &crate::forge::traits::PullRequestReviewMetadata,
-) -> Option<SinceLastReviewSelection> {
+) -> Option<usize> {
     let viewer = review_metadata.viewer_login.as_deref()?;
     let last_review = review_metadata
         .reviews
@@ -454,25 +447,9 @@ fn commits_since_last_review_selection(
         .max_by(|a, b| a.submitted_at.cmp(&b.submitted_at))?;
 
     let reviewed_commit = last_review.commit_oid.as_deref()?;
-    let reviewed_index = commits_newest_first
+    commits_newest_first
         .iter()
-        .position(|commit| commit.oid == reviewed_commit)?;
-
-    if reviewed_index == 0 {
-        return Some(SinceLastReviewSelection {
-            range: None,
-            reviewed_index,
-            message: "No commits since your last review".to_string(),
-        });
-    }
-
-    let count = reviewed_index;
-    let noun = if count == 1 { "commit" } else { "commits" };
-    Some(SinceLastReviewSelection {
-        range: Some((0, reviewed_index - 1)),
-        reviewed_index,
-        message: format!("Showing {count} {noun} since your last review — press Enter to see all"),
-    })
+        .position(|commit| commit.oid == reviewed_commit)
 }
 
 pub fn annotation_file_idx(annotation: &AnnotatedLine) -> Option<usize> {
