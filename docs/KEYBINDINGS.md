@@ -116,6 +116,7 @@ considers files that pass the active filters.
 | `<leader>k` | Move focus up (comments to files, or diff/files to commit selector when visible) |
 | `<leader>j` | Move focus down (files to comments when visible, otherwise diff) |
 | `<leader>e` | Toggle file list visibility |
+| `<leader>E` (Shift-E) | Reload review session and diff (same as `:e`; in PR mode, refetch PR and possibly switch session) |
 | `<leader>s` | Toggle commit selector visibility (also `:set commits!`) |
 | `<leader>f` | Toggle single-file view (also `:focus`, `:f`) |
 | `<leader>Q` | Close tuicr (warns on unsaved comments) |
@@ -229,7 +230,7 @@ In command mode,
 | `:{N}` | Jump to new-side line N in current file |
 | `:o{N}` | Jump to old-side line N in current file (matches deletions) |
 | `:w` (`:write`) | Save session |
-| `:e` (`:reload`) | Reload diff files |
+| `:e` (`:reload`) | Reload review session and diff (also `<leader>E`) |
 | `:edit` | Open focused file in `$EDITOR` |
 | `:clip` (`:export`) | Copy review to clipboard |
 | `:copy-url` | Copy the open PR URL to clipboard (PR mode) |

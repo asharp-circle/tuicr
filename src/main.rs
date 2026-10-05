@@ -877,6 +877,10 @@ fn handle_pending_leader_key(app: &mut App, key_code: crossterm::event::KeyCode)
             app.toggle_file_list();
             true
         }
+        crossterm::event::KeyCode::Char('E') => {
+            tuicr::handler::reload_review(app);
+            true
+        }
         crossterm::event::KeyCode::Char('h') => {
             app.focus_pane_left();
             true
@@ -1184,6 +1188,33 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn leader_shift_e_reloads_without_toggling_file_list() {
+        let mut app = test_app();
+        app.input_mode = InputMode::Normal;
+        let show_file_list = app.show_file_list;
+        app.message = None;
+
+        assert!(handle_pending_leader_key(
+            &mut app,
+            crossterm::event::KeyCode::Char('E')
+        ));
+        assert_eq!(app.show_file_list, show_file_list);
+        assert!(app.message.as_ref().unwrap().content.starts_with("Reloaded "));
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn leader_lowercase_e_still_toggles_file_list() {
+        let mut app = test_app();
+        let show_file_list = app.show_file_list;
+        assert!(handle_pending_leader_key(
+            &mut app,
+            crossterm::event::KeyCode::Char('e')
+        ));
+        assert_eq!(app.show_file_list, !show_file_list);
     }
 
     #[test]

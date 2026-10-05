@@ -251,6 +251,13 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
         ]),
         Line::from(vec![
             Span::styled(
+                format!("  {leader}E        "),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Reload review session and diff (also `:e`)"),
+        ]),
+        Line::from(vec![
+            Span::styled(
                 format!("  {leader}s        "),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
