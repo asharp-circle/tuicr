@@ -1259,6 +1259,16 @@ impl App {
                     comment_idx: c2,
                 },
             ) => f1 == f2 && l1 == l2 && s1 == s2 && c1 == c2,
+            (
+                AnnotatedLine::RemoteThreadLine {
+                    thread_idx: t1,
+                    comment_idx: c1,
+                },
+                AnnotatedLine::RemoteThreadLine {
+                    thread_idx: t2,
+                    comment_idx: c2,
+                },
+            ) => t1 == t2 && c1 == c2,
             _ => false,
         }
     }
@@ -1335,6 +1345,29 @@ impl App {
         if self.pending_comment_rx.is_some() || !self.pending_comment_queue.is_empty() {
             self.set_warning("Wait for the GitHub comment to finish before editing");
             return false;
+        }
+        self.remote_edit_identity = None;
+        let block_start = self.comment_block_start(self.diff_state.cursor_line);
+        if matches!(
+            self.line_annotations.get(self.diff_state.cursor_line),
+            Some(AnnotatedLine::RemoteThreadLine { .. })
+        ) {
+            if self.queue_editor_for_comment_at_cursor()
+                && let Some(pending) = self.pending_comment_editor.take()
+            {
+                self.pending_editor_target = None;
+                self.enter_comment_mode(false, None);
+                self.comment_buffer = pending.original;
+                self.comment_cursor = self.comment_current_line_cursor(block_start, cursor_at_end);
+                if let Some(AnnotatedLine::RemoteThreadLine { thread_idx, .. }) =
+                    self.line_annotations.get(self.diff_state.cursor_line)
+                {
+                    self.reply_thread_id = Some(self.forge_review_threads[*thread_idx].id.clone());
+                }
+                self.remote_edit_identity = Some(pending.identity);
+                self.rebuild_annotations();
+            }
+            return true;
         }
         let location = self.find_comment_at_cursor();
         // First annotation row of the comment under the cursor, so we can place
@@ -1461,6 +1494,7 @@ impl App {
         self.comment_line = line;
         self.comment_line_range = None;
         self.editing_comment_id = None;
+        self.remote_edit_identity = None;
         self.reply_thread_id = None;
     }
 
@@ -1475,6 +1509,7 @@ impl App {
         self.comment_line = None;
         self.comment_line_range = None;
         self.editing_comment_id = None;
+        self.remote_edit_identity = None;
         self.reply_thread_id = None;
     }
 
@@ -1487,6 +1522,7 @@ impl App {
         self.comment_vim_pending = CommentVimPending::None;
         self.comment_is_review_level = false;
         self.editing_comment_id = None;
+        self.remote_edit_identity = None;
         self.reply_thread_id = None;
         self.comment_line_range = None;
         self.rebuild_annotations();
@@ -1499,6 +1535,18 @@ impl App {
         }
 
         let content = self.comment_buffer.trim().to_string();
+        if let Some(identity) = self.remote_edit_identity.clone() {
+            self.apply_comment_editor_change(identity, content);
+            if self.pr_edit_rx.is_some() {
+                self.remote_edit_identity = None;
+                self.reply_thread_id = None;
+                self.input_mode = InputMode::Normal;
+                self.comment_buffer.clear();
+                self.rebuild_annotations();
+            }
+            return;
+        }
+
         if let Some(thread_id) = self.reply_thread_id.clone() {
             self.start_thread_reply(thread_id, content);
             return;

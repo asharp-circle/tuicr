@@ -1263,6 +1263,7 @@ pub struct App {
     pub comment_is_file_level: bool,
     pub comment_line: Option<(u32, LineSide)>,
     pub editing_comment_id: Option<String>,
+    pub remote_edit_identity: Option<comment_editor::CommentEditorIdentity>,
     /// Remote thread being replied to in the comment box, identified independently of row indices.
     pub reply_thread_id: Option<String>,
     pub(crate) failed_thread_reply: Option<(String, String)>,
@@ -1951,6 +1952,7 @@ mod commits;
 mod diff_load;
 mod editor_target;
 mod file_filter;
+pub mod file_picker;
 mod gaps;
 mod init;
 mod modes;
@@ -1962,7 +1964,6 @@ mod search;
 mod session;
 pub mod sessions_tab;
 mod submit;
-pub mod file_picker;
 pub use file_picker::{FilePickerCandidate, FilePickerMatch, FilePickerState};
 mod theme_picker;
 mod tree;

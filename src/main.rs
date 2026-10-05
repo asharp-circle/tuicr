@@ -1203,7 +1203,13 @@ mod tests {
             crossterm::event::KeyCode::Char('E')
         ));
         assert_eq!(app.show_file_list, show_file_list);
-        assert!(app.message.as_ref().unwrap().content.starts_with("Reloaded "));
+        assert!(
+            app.message
+                .as_ref()
+                .unwrap()
+                .content
+                .starts_with("Reloaded ")
+        );
         assert_eq!(app.input_mode, InputMode::Normal);
     }
 

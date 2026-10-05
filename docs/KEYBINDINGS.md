@@ -167,6 +167,9 @@ Inline comment boxes and comment navigator rows label local drafts **pending**, 
 | `y` | Copy review to clipboard |
 | `Y` | Copy the comment at cursor to clipboard |
 
+On your GitHub comment rows, including pending review comments, `i`/`A` open inline
+editing and save changes to GitHub.
+
 On a comment row in the diff, `e` edits the comment body in a temporary file and saves
 changes on editor exit. GitHub comments authored by another user cannot be edited;
 local drafts are saved in the session, and your pending or published GitHub inline

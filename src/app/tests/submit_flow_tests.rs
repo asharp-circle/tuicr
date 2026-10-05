@@ -2665,3 +2665,41 @@ fn should_not_overwrite_viewer_has_pending_review_from_stale_threads_fetch() {
     app.poll_pr_threads_events();
     assert!(app.viewer_has_pending_review);
 }
+
+#[test]
+fn inline_remote_edit_loads_body_and_renders_input() {
+    let mut app = make_pr_app_with_single_modified_file("src/lib.rs");
+    app.focused_panel = FocusedPanel::Diff;
+    app.pr_viewer_login = Some("alice".into());
+    app.forge_review_threads = vec![resolution_test_thread()];
+    app.forge_review_threads[0].comments[1].body = "first\nsecond".into();
+    app.rebuild_annotations();
+    let start = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::RemoteThreadLine { comment_idx: 1, .. }))
+        .unwrap();
+    app.diff_state.cursor_line = start + 2;
+    assert!(app.enter_edit_mode(true));
+    assert_eq!(app.comment_buffer, "first\nsecond");
+    assert_eq!(app.comment_cursor, "first\nsecond".len());
+    assert!(app.remote_edit_identity.is_some());
+    assert_eq!(
+        app.reply_thread_id.as_deref(),
+        Some(app.forge_review_threads[0].id.as_str())
+    );
+    assert!(app.pending_editor_target.is_none());
+    let backend = ratatui::backend::TestBackend::new(120, 40);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| crate::ui::render(frame, &mut app))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(text.contains("second"));
+}

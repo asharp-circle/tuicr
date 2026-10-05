@@ -83,7 +83,8 @@ impl FilePickerState {
         if self.matches.is_empty() {
             self.list_state.select(None);
         } else {
-            self.list_state.select(Some(index.min(self.matches.len() - 1)));
+            self.list_state
+                .select(Some(index.min(self.matches.len() - 1)));
         }
     }
 

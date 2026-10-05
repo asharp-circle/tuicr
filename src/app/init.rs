@@ -531,6 +531,7 @@ impl App {
             comment_is_file_level: true,
             comment_line: None,
             editing_comment_id: None,
+            remote_edit_identity: None,
             reply_thread_id: None,
             failed_thread_reply: None,
             pending_thread_reply: None,
