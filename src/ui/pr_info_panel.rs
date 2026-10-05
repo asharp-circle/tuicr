@@ -277,7 +277,7 @@ pub fn issue_comment_display_lines(
     let visual_lines: usize = comment
         .body
         .split('\n')
-        .map(|line| comment_panel::wrap_segments(line, content_area).len())
+        .map(|line| comment_panel::wrap_comment_segments(line, content_area).len())
         .sum();
     2 + visual_lines
 }
