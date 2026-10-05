@@ -638,7 +638,11 @@ impl App {
 
     /// In SBS, picks Old or New per `side`, falling back to the other pane
     /// if the requested one is empty. Unified diff rows ignore `side`.
-    pub fn content_for_side(&self, ann_idx: usize, side: LineSide) -> Option<&str> {
+    pub fn content_for_side(
+        &self,
+        ann_idx: usize,
+        side: LineSide,
+    ) -> Option<std::borrow::Cow<'_, str>> {
         let ann = self.line_annotations.get(ann_idx)?;
         match ann {
             AnnotatedLine::DiffLine {
@@ -654,7 +658,7 @@ impl App {
                     .get(*hunk_idx)?
                     .lines
                     .get(*line_idx)?;
-                Some(line.content.as_str())
+                Some(line.content.as_str().into())
             }
             AnnotatedLine::SideBySideLine {
                 file_idx,
@@ -671,14 +675,14 @@ impl App {
                     .and_then(|i| hunk.lines.get(i))
                     .map(|l| l.content.as_str());
                 match side {
-                    LineSide::New => add.or(del),
-                    LineSide::Old => del.or(add),
+                    LineSide::New => add.or(del).map(Into::into),
+                    LineSide::Old => del.or(add).map(Into::into),
                 }
             }
             AnnotatedLine::ExpandedContext { gap_id, line_idx } => self
                 .get_expanded_line(gap_id, *line_idx)
-                .map(|l| l.content.as_str()),
-            _ => None,
+                .map(|l| l.content.as_str().into()),
+            _ => self.rendered_comment_text(ann_idx).map(Into::into),
         }
     }
 
@@ -730,6 +734,23 @@ impl App {
             width * 2 + 1
         } else {
             width
+        }
+    }
+
+    pub fn selection_geometry(
+        &self,
+        idx: usize,
+        inner: ratatui::layout::Rect,
+        side: LineSide,
+    ) -> PaneGeom {
+        if self.rendered_comment_text(idx).is_some() {
+            PaneGeom {
+                content_x_start: inner.x + 1,
+                content_x_end: inner.x + inner.width,
+                content_width: inner.width.saturating_sub(1) as usize,
+            }
+        } else {
+            self.pane_geometry(inner, side)
         }
     }
 
@@ -824,7 +845,7 @@ impl App {
         let Some(content) = self.content_for_side(idx, side) else {
             return Some(zero_point);
         };
-        let geom = self.pane_geometry(inner, side);
+        let geom = self.selection_geometry(idx, inner, side);
         if geom.content_width == 0 {
             return Some(zero_point);
         }
@@ -839,12 +860,23 @@ impl App {
         }
         let which_row = rel - walker;
         let total_chars = content.chars().count();
-        let (row_start, row_end) = self
-            .content_row_char_ranges(content, geom.content_width)
-            .get(which_row)
-            .copied()
-            .unwrap_or((total_chars, total_chars));
-        let char_offset = (row_start + col_in_row).min(row_end);
+        let char_offset =
+            if let Some(cells) = self.comment_selection_cells(idx, inner.width as usize) {
+                let col = screen_col.saturating_sub(inner.x) as usize;
+                cells
+                    .iter()
+                    .position(|&(row, start, width)| {
+                        row > which_row || (row == which_row && start + width > col)
+                    })
+                    .unwrap_or(total_chars)
+            } else {
+                let (row_start, row_end) = self
+                    .content_row_char_ranges(&content, geom.content_width)
+                    .get(which_row)
+                    .copied()
+                    .unwrap_or((total_chars, total_chars));
+                (row_start + col_in_row).min(row_end)
+            };
         Some(SelPoint {
             annotation_idx: idx,
             char_offset,

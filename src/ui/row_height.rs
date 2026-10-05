@@ -113,7 +113,9 @@ pub(crate) fn annotation_row_height(app: &App, idx: usize) -> usize {
             let content_width =
                 viewport_width - crate::app::unified_gutter(app.lineno_width()) as usize;
             wrap_len(
-                app.content_for_side(idx, LineSide::New).unwrap_or_default(),
+                app.content_for_side(idx, LineSide::New)
+                    .as_deref()
+                    .unwrap_or_default(),
                 content_width,
             )
         }

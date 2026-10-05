@@ -404,7 +404,7 @@ pub(super) fn wrap_spans_hanging<'a>(
     rows
 }
 
-pub(super) fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Vec<Span<'a>>> {
+pub(crate) fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Vec<Span<'a>>> {
     if width == 0 {
         return vec![spans.to_vec()];
     }
