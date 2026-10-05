@@ -1029,7 +1029,7 @@ fn dispatch_command(app: &mut App, kind: CommandKind) -> CommandAfterDispatch {
     }
 }
 
-fn reload_review(app: &mut App) {
+pub fn reload_review(app: &mut App) {
     let comment_reload = app.reload_persisted_session_if_changed(true);
     if matches!(app.diff_source, app::DiffSource::PullRequest(_)) {
         if let Err(e) = comment_reload {
