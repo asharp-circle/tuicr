@@ -301,10 +301,7 @@ fn header_source_chunk(app: &App) -> Option<String> {
     header_source_chunk_with_title_limit(app, Some(60))
 }
 
-fn header_source_chunk_with_title_limit(
-    app: &App,
-    max_title_len: Option<usize>,
-) -> Option<String> {
+fn header_source_chunk_with_title_limit(app: &App, max_title_len: Option<usize>) -> Option<String> {
     match &app.diff_source {
         // The working-tree family all diff against HEAD but never named it, so
         // the commit under review was only visible via `-r <sha>`. The
@@ -438,11 +435,11 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                         && app.forge_kind() == Some(crate::forge::traits::ForgeKind::GitHub) =>
                 {
                     Cow::Borrowed(
-                        "   j/k scroll · {/} file · m/M comment · x resolve/reopen · + react · r file · R hunk · c comment · ? help",
+                        "   j/k scroll · {/} file · H/M/L viewport · s/S comment · x resolve/reopen · + react · r file · R hunk · c comment · ? help",
                     )
                 }
                 InputMode::Normal => Cow::Borrowed(
-                    "   j/k scroll \u{00b7} {/} file \u{00b7} m/M comment \u{00b7} r file \u{00b7} R hunk \u{00b7} c comment \u{00b7} ? help",
+                    "   j/k scroll \u{00b7} {/} file \u{00b7} H/M/L viewport · s/S comment \u{00b7} r file \u{00b7} R hunk \u{00b7} c comment \u{00b7} ? help",
                 ),
                 InputMode::Command => {
                     Cow::Borrowed("   tab complete \u{00b7} \u{21b5} execute \u{00b7} esc cancel")

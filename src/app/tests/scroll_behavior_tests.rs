@@ -749,3 +749,60 @@ fn cursor_down_with_stale_cursor_past_end_does_not_underflow() {
         "cursor should be clamped to the current max line"
     );
 }
+
+#[test]
+fn viewport_motions_keep_scroll_and_ignore_scroll_margin() {
+    let mut app = build_scroll_app(40, 10, 5);
+    app.diff_state.scroll_offset = 10;
+    for (row, expected) in [(0, 10), (5, 15), (9, 19)] {
+        app.move_to_viewport_line(row);
+        assert_eq!(app.diff_state.cursor_line, expected);
+        assert_eq!(app.diff_state.scroll_offset, 10);
+    }
+}
+
+#[test]
+fn viewport_motions_clamp_short_and_empty_views() {
+    let mut app = build_scroll_app(2, 20, 5);
+    app.move_to_viewport_line(19);
+    assert!(app.diff_state.cursor_line <= app.max_cursor_line());
+    assert_eq!(app.diff_state.scroll_offset, 0);
+    app.line_annotations.clear();
+    app.move_to_viewport_line(0);
+}
+
+#[test]
+fn viewport_motions_use_wrapped_row_heights() {
+    let mut app = build_wrapping_scroll_app(40, 20, 20);
+    app.diff_state.scroll_offset = 5;
+    let mut used = 0;
+    let mut expected = 5;
+    for idx in 5..app.line_annotations.len() {
+        expected = idx;
+        used += annotation_row_height(&app, idx);
+        if used > 10 {
+            break;
+        }
+    }
+    app.move_to_viewport_line(10);
+    assert_eq!(app.diff_state.cursor_line, expected);
+    assert_eq!(app.diff_state.scroll_offset, 5);
+}
+
+#[test]
+fn viewport_motions_include_partially_visible_wrapped_content() {
+    let mut app = build_wrapping_scroll_app(40, 3, 10);
+    let content = app
+        .line_annotations
+        .iter()
+        .position(|a| matches!(a, AnnotatedLine::DiffLine { .. }))
+        .unwrap();
+    app.line_annotations[content - 1] = AnnotatedLine::Spacing;
+    app.diff_state.scroll_offset = content - 1;
+    assert!(annotation_row_height(&app, content) > 3);
+    for row in [0, 1, 2] {
+        app.move_to_viewport_line(row);
+        assert_eq!(app.diff_state.cursor_line, content);
+        assert_eq!(app.diff_state.scroll_offset, content - 1);
+    }
+}

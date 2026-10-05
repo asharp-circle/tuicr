@@ -312,7 +312,8 @@ A first-session cheatsheet. Press `?` inside tuicr for the full reference.
 | `g` / `G` | Top / bottom |
 | `{` / `}` | Previous / next file |
 | `[` / `]` | Previous / next hunk |
-| `m` / `M` | Next / previous comment |
+| `H` / `M` / `L` | Move to top / middle / bottom visible diff line |
+| `s` / `S` | Next / previous comment |
 | `/` | Search the diff by case-insensitive regex, or search the file tree/help by text — whichever is focused/open |
 | `n` / `N` | Next / previous search match (wraps); matches stay highlighted — `Esc` clears |
 | `i` / `e` (file tree) | Filter files in / out by regex; narrows the tree **and** the diff |
