@@ -546,6 +546,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                                 &app.theme,
                                 lw,
                                 app.relative_line_numbers,
+                                app.dual_line_numbers,
                                 line_search,
                             );
                         }
@@ -627,6 +628,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                                 &app.theme,
                                 lw,
                                 app.relative_line_numbers,
+                                app.dual_line_numbers,
                                 line_search,
                             );
                         }
@@ -665,14 +667,25 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                         let style = base_style;
                         // A commit message is prose, not code: render it without
                         // line numbers, matching the side-by-side view.
-                        let line_num_str = crate::ui::diff_view::unified_line_number_field(
-                            diff_line,
-                            lw,
-                            app.relative_line_numbers,
-                            line_idx,
-                            current_line_idx,
-                            file.is_commit_message,
-                        );
+                        let line_num_str = if file.is_commit_message {
+                            " ".repeat(lw + 1)
+                        } else if app.dual_line_numbers {
+                            crate::ui::diff_view::dual_line_number_field(
+                                diff_line.new_lineno.or(diff_line.old_lineno),
+                                line_idx,
+                                current_line_idx,
+                                lw,
+                            )
+                        } else {
+                            crate::ui::diff_view::unified_line_number_field(
+                                diff_line,
+                                lw,
+                                app.relative_line_numbers,
+                                line_idx,
+                                current_line_idx,
+                                file.is_commit_message,
+                            )
+                        };
                         let prefix = crate::ui::diff_view::unified_line_origin_marker(diff_line);
 
                         let indicator = cursor_indicator(line_idx, current_line_idx);
@@ -1179,6 +1192,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                             &app.theme,
                             lw,
                             app.relative_line_numbers,
+                            app.dual_line_numbers,
                             line_search,
                         );
                     }
@@ -1220,6 +1234,7 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
                             &app.theme,
                             lw,
                             app.relative_line_numbers,
+                            app.dual_line_numbers,
                             line_search,
                         );
                     }
@@ -1566,16 +1581,26 @@ fn render_expanded_context_line(
     theme: &Theme,
     lw: usize,
     relative_line_numbers: bool,
+    dual_line_numbers: bool,
     search: Option<(&crate::ui::text_utils::SearchPattern, Style)>,
 ) {
     let indicator = cursor_indicator(*line_idx, current_line_idx);
-    let line_num = crate::ui::diff_view::expanded_context_lineno_field(
-        expanded_line,
-        lw,
-        relative_line_numbers,
-        *line_idx,
-        current_line_idx,
-    );
+    let line_num = if dual_line_numbers {
+        crate::ui::diff_view::dual_line_number_field(
+            expanded_line.new_lineno,
+            *line_idx,
+            current_line_idx,
+            lw,
+        )
+    } else {
+        crate::ui::diff_view::expanded_context_lineno_field(
+            expanded_line,
+            lw,
+            relative_line_numbers,
+            *line_idx,
+            current_line_idx,
+        )
+    };
     let mut line_spans = vec![
         Span::styled(indicator, styles::current_line_indicator_style(theme)),
         Span::styled(line_num, styles::expanded_context_style(theme)),
@@ -2135,6 +2160,25 @@ mod remote_comments_snapshot_tests {
             body.contains("Type your comment..."),
             "expected the comment input box to be visible in:\n{body}"
         );
+    }
+
+    #[test]
+    fn should_render_dual_numbers_in_unified() {
+        let mut file = commit_message_file("DUALCODE");
+        file.is_commit_message = false;
+        let mut app = make_revision_app(vec![file]);
+        app.dual_line_numbers = true;
+        app.rebuild_annotations();
+        let buf = draw_unified_diff(&mut app);
+        let row = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .find(|r| r.contains("DUALCODE"))
+            .unwrap();
+        assert!(row.contains("  1 "), "{row}");
     }
 
     #[test]
