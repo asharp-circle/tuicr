@@ -1870,7 +1870,11 @@ fn handle_shared_normal_action(app: &mut App, action: Action) {
         }
         Action::ClearSearchHighlight => app.clear_search_highlight(),
         Action::EnterVisualMode => {
-            if app.get_line_at_cursor().is_some() {
+            if app.get_line_at_cursor().is_some()
+                || app
+                    .rendered_comment_text(app.diff_state.cursor_line)
+                    .is_some()
+            {
                 app.enter_visual_mode_at_cursor();
             } else {
                 app.set_message("Move cursor to a diff line to start visual selection");

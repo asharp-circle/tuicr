@@ -358,7 +358,7 @@ pub(super) fn render_hidden_lines(
     *line_idx += 1;
 }
 
-pub(super) fn comment_type_presentation(
+pub(crate) fn comment_type_presentation(
     app: &App,
     comment_type: &crate::model::CommentType,
 ) -> comment_panel::CommentTypePresentation {
@@ -453,7 +453,6 @@ pub(super) fn populate_row_to_annotation(
 
 struct OverlayPaint {
     sel: VisualSelection,
-    geom: crate::app::PaneGeom,
     inner_left: u16,
     inner_right: u16,
     style: Style,
@@ -469,7 +468,6 @@ pub(super) fn paint_visual_selection_overlay(
     let (start, end) = sel.ordered();
     let paint = OverlayPaint {
         sel,
-        geom: app.pane_geometry(inner, sel.anchor.side),
         inner_left: inner.x,
         inner_right: inner.x + inner.width.saturating_sub(1),
         style: styles::visual_selection_style(theme),
@@ -509,17 +507,19 @@ fn paint_annotation_group(
     paint: &OverlayPaint,
 ) {
     let (ann_idx, first_row, last_row) = group;
-    if paint.geom.content_width == 0 {
-        return;
-    }
-
     let side = paint.sel.anchor.side;
+    let geom = app.selection_geometry(
+        ann_idx,
+        Rect::new(
+            paint.inner_left,
+            first_row,
+            paint.inner_right - paint.inner_left + 1,
+            last_row - first_row + 1,
+        ),
+        side,
+    );
     let group_height = (last_row - first_row) as usize + 1;
-    let pane_last_col = paint
-        .geom
-        .content_x_end
-        .saturating_sub(1)
-        .min(paint.inner_right);
+    let pane_last_col = geom.content_x_end.saturating_sub(1).min(paint.inner_right);
 
     let Some(content) = app.content_for_side(ann_idx, side) else {
         // Headers and other non-content rows aren't bound by the pane
@@ -542,9 +542,30 @@ fn paint_annotation_group(
         return;
     }
 
+    if let Some(cells) =
+        app.comment_selection_cells(ann_idx, (paint.inner_right - paint.inner_left + 1) as usize)
+    {
+        for &(row, col, width) in cells.iter().take(hi).skip(lo) {
+            if row < group_height && width > 0 && paint.inner_left + col as u16 <= paint.inner_right
+            {
+                let x = paint.inner_left + col as u16;
+                frame.buffer_mut().set_style(
+                    Rect::new(
+                        x,
+                        first_row + row as u16,
+                        (width as u16).min(paint.inner_right - x + 1),
+                        1,
+                    ),
+                    paint.style,
+                );
+            }
+        }
+        return;
+    }
+
     for which_row in 0..group_height {
-        let row_char_start = which_row * paint.geom.content_width;
-        let row_char_end = row_char_start + paint.geom.content_width;
+        let row_char_start = which_row * geom.content_width;
+        let row_char_end = row_char_start + geom.content_width;
         let isect_lo = lo.max(row_char_start);
         let isect_hi = hi.min(row_char_end);
         if isect_hi <= isect_lo {
@@ -552,8 +573,8 @@ fn paint_annotation_group(
         }
         let col_lo_off = (isect_lo - row_char_start) as u16;
         let col_hi_off = (isect_hi - row_char_start) as u16;
-        let col_lo = (paint.geom.content_x_start + col_lo_off).min(pane_last_col);
-        let col_hi_excl = paint.geom.content_x_start + col_hi_off;
+        let col_lo = (geom.content_x_start + col_lo_off).min(pane_last_col);
+        let col_hi_excl = geom.content_x_start + col_hi_off;
         if col_hi_excl == 0 {
             continue;
         }
