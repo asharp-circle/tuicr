@@ -57,6 +57,12 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         &["set relativenumber!"],
         CommandKind::ToggleRelativeLineNumbers,
     ),
+    CommandSpec::new(&["set dualnumber"], CommandKind::SetDualLineNumbers(true)),
+    CommandSpec::new(
+        &["set nodualnumber"],
+        CommandKind::SetDualLineNumbers(false),
+    ),
+    CommandSpec::new(&["set dualnumber!"], CommandKind::ToggleDualLineNumbers),
     CommandSpec::new(&["vim", "set vim!"], CommandKind::ToggleVim),
     CommandSpec::new(&["set vim"], CommandKind::SetVim(true)),
     CommandSpec::new(&["novim", "set novim"], CommandKind::SetVim(false)),
@@ -149,6 +155,8 @@ enum CommandKind {
     ToggleWrap,
     SetRelativeLineNumbers(bool),
     ToggleRelativeLineNumbers,
+    SetDualLineNumbers(bool),
+    ToggleDualLineNumbers,
     ToggleVim,
     SetVim(bool),
     SetCommitsVisible(bool),
@@ -956,6 +964,14 @@ fn dispatch_command(app: &mut App, kind: CommandKind) -> CommandAfterDispatch {
         }
         CommandKind::ToggleRelativeLineNumbers => {
             app.relative_line_numbers = !app.relative_line_numbers;
+            CommandAfterDispatch::ExitCommandMode
+        }
+        CommandKind::SetDualLineNumbers(enabled) => {
+            app.dual_line_numbers = enabled;
+            CommandAfterDispatch::ExitCommandMode
+        }
+        CommandKind::ToggleDualLineNumbers => {
+            app.dual_line_numbers = !app.dual_line_numbers;
             CommandAfterDispatch::ExitCommandMode
         }
         CommandKind::ToggleVim => {
@@ -1942,6 +1958,20 @@ pub fn handle_submit_confirm_action(app: &mut App, action: Action) {
 #[cfg(test)]
 mod command_tests {
     use super::{CommandKind, command_spec_for};
+
+    #[test]
+    fn parses_dual_line_number_commands() {
+        for (command, expected) in [
+            ("set dualnumber", CommandKind::SetDualLineNumbers(true)),
+            ("set nodualnumber", CommandKind::SetDualLineNumbers(false)),
+            ("set dualnumber!", CommandKind::ToggleDualLineNumbers),
+        ] {
+            assert_eq!(
+                command_spec_for(command).map(|spec| spec.kind),
+                Some(expected)
+            );
+        }
+    }
 
     #[test]
     fn parses_relative_line_number_commands() {

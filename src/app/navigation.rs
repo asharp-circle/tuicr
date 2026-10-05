@@ -701,12 +701,17 @@ impl App {
             .copied()
             .max()
             .unwrap_or(0);
-        let relative_max = if self.relative_line_numbers {
+        let relative_max = if self.relative_line_numbers || self.dual_line_numbers {
             self.line_annotations.len().saturating_sub(1) as u32
         } else {
             0
         };
-        lineno_width(hunk_max.max(cache_max).max(relative_max))
+        let width = lineno_width(hunk_max.max(cache_max).max(relative_max));
+        if self.dual_line_numbers {
+            width * 2 + 1
+        } else {
+            width
+        }
     }
 
     pub fn pane_geometry(&self, inner: ratatui::layout::Rect, side: LineSide) -> PaneGeom {

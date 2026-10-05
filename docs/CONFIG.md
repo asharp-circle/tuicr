@@ -43,6 +43,7 @@ q_quits = false
 comment_tab_width = 4
 wrap = false
 relative_line_numbers = false
+dual_line_numbers = false
 cursor_line = true
 search_highlight = true
 transparent_background = true
@@ -108,6 +109,7 @@ session_header = true
 | `comment_tab_width`        | `4`          | Spaces inserted by Tab while typing in the vim comment box (Insert mode).                                                                                  |
 | `wrap`                     | `false`      | Line wrap in the diff view. Toggle with `:set wrap!`.                                                                                                      |
 | `relative_line_numbers`    | `false`      | Show gutter numbers as rendered-row distances from the cursor. Toggle with `:set relativenumber!`.                                                         |
+| `dual_line_numbers`        | `false`      | Show relative rendered-row distance and absolute source line side-by-side in both diff views. Takes precedence over `relative_line_numbers`; toggle with `:set dualnumber!`. |
 | `cursor_line`              | `true`       | Highlight the current cursor line and visual selection.                                                                                                    |
 | `search_highlight`         | `true`       | Highlight `/` search matches in the diff view. Clear at runtime with `Esc`; `n` / `N` re-enable.                                                           |
 | `transparent_background`   | `true`       | Let the terminal background show through panels. `false` paints the theme's `panel_bg`.                                                                    |

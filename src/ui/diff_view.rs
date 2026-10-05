@@ -91,9 +91,39 @@ pub(super) fn relative_line_number_field(
         .unwrap_or_else(|| " ".repeat(lw + 1))
 }
 
+pub(super) fn dual_line_number_field(
+    source_line: Option<u32>,
+    line_idx: usize,
+    current_line_idx: usize,
+    lw: usize,
+) -> String {
+    let width = lw.saturating_sub(1) / 2;
+    source_line
+        .map(|line| {
+            format!(
+                "{:>width$} {line:>width$} ",
+                line_idx.abs_diff(current_line_idx)
+            )
+        })
+        .unwrap_or_else(|| " ".repeat(lw + 1))
+}
+
 #[cfg(test)]
 mod relative_line_number_tests {
     use super::relative_line_number_field;
+
+    #[test]
+    fn should_render_dual_numbers() {
+        assert_eq!(
+            super::dual_line_number_field(Some(100), 14, 10, 7),
+            "  4 100 "
+        );
+        assert_eq!(
+            super::dual_line_number_field(Some(100), 10, 10, 7),
+            "  0 100 "
+        );
+        assert_eq!(super::dual_line_number_field(None, 14, 10, 7), "        ");
+    }
 
     #[test]
     fn uses_rendered_row_distance_and_preserves_missing_sides() {

@@ -495,6 +495,7 @@ impl App {
             focused_panel: FocusedPanel::Diff,
             diff_view_mode: DiffViewMode::Unified,
             relative_line_numbers: false,
+            dual_line_numbers: false,
             cursor_side: LineSide::New,
             file_list_state: FileListState::default(),
             comment_navigator_state: CommentNavigatorState::default(),

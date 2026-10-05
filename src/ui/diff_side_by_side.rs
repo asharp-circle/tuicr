@@ -179,7 +179,7 @@ fn pan_sbs_row(meta: &SbsRowMeta, scroll_x: usize, content_width: usize) -> Line
 }
 
 struct SideSpec {
-    lineno: Option<u32>,
+    lineno: Option<String>,
     marker: &'static str,
     marker_style: Style,
 }
@@ -332,12 +332,21 @@ impl SideBySideContext<'_> {
         Some((needle, self.search_style))
     }
 
-    fn display_lineno(&self, source_line: Option<u32>, line_idx: usize) -> Option<u32> {
+    fn display_lineno(&self, source_line: Option<u32>, line_idx: usize) -> Option<String> {
         source_line.map(|line| {
-            if self.app.relative_line_numbers {
-                line_idx.abs_diff(self.current_line_idx) as u32
+            if self.app.dual_line_numbers {
+                crate::ui::diff_view::dual_line_number_field(
+                    Some(line),
+                    line_idx,
+                    self.current_line_idx,
+                    self.lineno_width,
+                )
+                .trim_end()
+                .to_string()
+            } else if self.app.relative_line_numbers {
+                line_idx.abs_diff(self.current_line_idx).to_string()
             } else {
-                line
+                line.to_string()
             }
         })
     }
@@ -1920,7 +1929,7 @@ fn add_deletion_spans(
     diff_line: &crate::model::DiffLine,
     content_width: usize,
     lw: usize,
-    display_lineno: Option<u32>,
+    display_lineno: Option<String>,
     search: Option<(&str, Style)>,
 ) {
     let line_num = display_lineno
@@ -1964,7 +1973,7 @@ fn add_addition_spans(
     diff_line: &crate::model::DiffLine,
     content_width: usize,
     lw: usize,
-    display_lineno: Option<u32>,
+    display_lineno: Option<String>,
     search: Option<(&str, Style)>,
 ) {
     let line_num = display_lineno
@@ -2707,6 +2716,25 @@ mod remote_comments_side_by_side_snapshot_tests {
 
     fn char_at(buf: &Buffer, x: u16, y: u16) -> String {
         buf[(x, y)].symbol().to_string()
+    }
+
+    #[test]
+    fn should_render_dual_numbers_in_both_panes() {
+        let mut app = make_pr_app();
+        app.diff_files = vec![diff_file_with_pair("DUALLEFT", "DUALRIGHT")];
+        app.dual_line_numbers = true;
+        app.rebuild_annotations();
+        let buf = draw_sbs(&mut app, 160, 20);
+        let row = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| char_at(&buf, x, y))
+                    .collect::<String>()
+            })
+            .find(|r| r.contains("DUALLEFT"))
+            .unwrap();
+        assert!(row.contains("DUALRIGHT"));
+        assert_eq!(row.matches("  1 ").count(), 2, "{row}");
     }
 
     #[test]

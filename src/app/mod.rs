@@ -1209,6 +1209,7 @@ pub struct App {
     pub focused_panel: FocusedPanel,
     pub diff_view_mode: DiffViewMode,
     pub relative_line_numbers: bool,
+    pub dual_line_numbers: bool,
     /// Which side the cursor targets in side-by-side view (old/left vs
     /// new/right). Drives the `▶` caret placement and the side a new line
     /// comment attaches to. Ignored in unified view. Defaults to `New`.

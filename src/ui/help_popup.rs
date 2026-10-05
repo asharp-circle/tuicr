@@ -884,6 +884,13 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
         ]),
         Line::from(vec![
             Span::styled(
+                "  :set dualnumber[!] / :set nodualnumber",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  Relative + absolute gutter numbers"),
+        ]),
+        Line::from(vec![
+            Span::styled(
                 "  :set relativenumber[!]",
                 Style::default().add_modifier(Modifier::BOLD),
             ),

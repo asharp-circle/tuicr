@@ -257,6 +257,8 @@ In command mode,
 | `:set wrap!` (`:wrap`) | Toggle line wrap in diff view |
 | `:set relativenumber` / `:set norelativenumber` | Enable / disable relative rendered-row numbers |
 | `:set relativenumber!` | Toggle relative rendered-row numbers |
+| `:set dualnumber` / `:set nodualnumber` | Enable / disable dual relative and absolute gutter numbers |
+| `:set dualnumber!` | Toggle dual gutter numbers |
 | `:set commits` | Show inline commit selector |
 | `:set nocommits` | Hide inline commit selector |
 | `:set commits!` | Toggle inline commit selector |
@@ -276,6 +278,8 @@ In command mode,
 | `ZQ` | Quit without saving |
 | `<leader>Q` | Close tuicr (warns on unsaved comments; discards review-only state) |
 | `?` | Toggle help |
+
+Dual numbers show rendered-row distance first, then the absolute source line in both diff views (old line for deletions, new line otherwise). The cursor row shows distance zero. Dual mode takes precedence over relative-only mode; disabling it restores the existing relative-number setting.
 
 Pressing bare `q` no longer quits by default; it prints a reminder to use `:q` instead. Set
 `q_quits = true` to restore `q` as a quit key in review modes.
