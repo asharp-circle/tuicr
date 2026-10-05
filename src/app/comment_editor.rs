@@ -158,7 +158,11 @@ impl App {
         }
     }
 
-    fn apply_comment_editor_change(&mut self, identity: CommentEditorIdentity, body: String) {
+    pub(super) fn apply_comment_editor_change(
+        &mut self,
+        identity: CommentEditorIdentity,
+        body: String,
+    ) {
         if body.trim().is_empty() {
             self.set_warning("Comment body cannot be empty");
             return;
