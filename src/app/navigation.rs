@@ -413,6 +413,46 @@ impl App {
         (anchor - self.scroll_offset_for_rows_above(anchor, row_budget)).max(1)
     }
 
+    pub fn move_to_viewport_line(&mut self, row: usize) {
+        if self.line_annotations.is_empty() {
+            return;
+        }
+        let first = self.diff_state.scroll_offset.min(self.max_cursor_line());
+        let viewport = self.diff_state.viewport_height.max(1);
+        let mut used = 0;
+        let mut last = first;
+        for idx in first..=self.max_cursor_line() {
+            if used >= viewport {
+                break;
+            }
+            last = idx;
+            used += annotation_row_height(self, idx);
+        }
+        let mut used = 0;
+        let mut cursor = first;
+        for idx in first..=last {
+            cursor = idx;
+            used += annotation_row_height(self, idx);
+            if used > row {
+                break;
+            }
+        }
+        if self.line_annotations.get(cursor).is_some_and(is_decoration) {
+            let forward = skip_decoration_forward(&self.line_annotations, cursor, last);
+            cursor = if self
+                .line_annotations
+                .get(forward)
+                .is_some_and(|a| !is_decoration(a))
+            {
+                forward
+            } else {
+                skip_decoration_backward(&self.line_annotations, cursor).max(first)
+            };
+        }
+        self.diff_state.cursor_line = cursor;
+        self.update_current_file_from_cursor();
+    }
+
     pub fn center_cursor(&mut self) {
         let viewport = self.diff_state.viewport_height.max(1);
         let max_scroll = self.max_scroll_offset();

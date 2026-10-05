@@ -13,6 +13,9 @@ pub enum Action {
     PageUp,
     GoToTop,
     GoToBottom,
+    ViewportHigh,
+    ViewportMiddle,
+    ViewportLow,
     Digit(u8),
     NextFile,
     PrevFile,
@@ -240,8 +243,11 @@ fn map_normal_mode_with_q_quits(key: KeyEvent, leader_key: char, q_quits: bool) 
         (KeyCode::Char('{'), _) => Action::PrevFile,
         (KeyCode::Char(']'), _) => Action::NextHunk,
         (KeyCode::Char('['), _) => Action::PrevHunk,
-        (KeyCode::Char('m'), KeyModifiers::NONE) => Action::NextComment,
-        (KeyCode::Char('M'), _) => Action::PrevComment,
+        (KeyCode::Char('s'), KeyModifiers::NONE) => Action::NextComment,
+        (KeyCode::Char('S'), _) => Action::PrevComment,
+        (KeyCode::Char('H'), _) => Action::ViewportHigh,
+        (KeyCode::Char('M'), _) => Action::ViewportMiddle,
+        (KeyCode::Char('L'), _) => Action::ViewportLow,
         (KeyCode::Char(')'), _) => Action::CycleCommitNext,
         (KeyCode::Char('('), _) => Action::CycleCommitPrev,
 
@@ -706,17 +712,14 @@ mod tests {
     }
 
     #[test]
-    fn should_leave_shift_h_unbound_for_vim_motions() {
-        // Reviewed-file visibility is command-only (`:set reviewed!`). `H` is a
-        // vim motion, and this project deliberately does not spend new
-        // single-stroke keys, so nothing may claim it.
+    fn should_map_shift_h_to_viewport_high() {
         assert_eq!(
             map_file_tree_mode(key_shift('H'), DEFAULT_LEADER_KEY),
-            Action::None
+            Action::ViewportHigh
         );
         assert_eq!(
             map_normal_mode(key_shift('H'), DEFAULT_LEADER_KEY),
-            Action::None
+            Action::ViewportHigh
         );
     }
 
@@ -986,11 +989,30 @@ mod tests {
     }
 
     #[test]
-    fn should_map_m_to_comment_navigation_in_normal_mode() {
-        let action = map_normal_mode(key(KeyCode::Char('m')), DEFAULT_LEADER_KEY);
+    fn should_map_viewport_motions() {
+        for (ch, action) in [
+            ('H', Action::ViewportHigh),
+            ('M', Action::ViewportMiddle),
+            ('L', Action::ViewportLow),
+        ] {
+            assert_eq!(map_normal_mode(key_shift(ch), DEFAULT_LEADER_KEY), action);
+            assert_eq!(
+                map_normal_mode(key(KeyCode::Char(ch)), DEFAULT_LEADER_KEY),
+                action
+            );
+        }
+        assert_eq!(
+            map_normal_mode(key(KeyCode::Char('m')), DEFAULT_LEADER_KEY),
+            Action::None
+        );
+    }
+
+    #[test]
+    fn should_map_s_to_comment_navigation_in_normal_mode() {
+        let action = map_normal_mode(key(KeyCode::Char('s')), DEFAULT_LEADER_KEY);
         assert_eq!(action, Action::NextComment);
 
-        let action = map_normal_mode(key_shift('M'), DEFAULT_LEADER_KEY);
+        let action = map_normal_mode(key_shift('S'), DEFAULT_LEADER_KEY);
         assert_eq!(action, Action::PrevComment);
     }
 

@@ -1764,6 +1764,11 @@ fn handle_shared_normal_action(app: &mut App, action: Action) {
         Action::PrevFile => app.prev_file(),
         Action::NextHunk => app.next_hunk(),
         Action::PrevHunk => app.prev_hunk(),
+        Action::ViewportHigh => app.move_to_viewport_line(0),
+        Action::ViewportMiddle => {
+            app.move_to_viewport_line(app.diff_state.viewport_height.max(1) / 2)
+        }
+        Action::ViewportLow => app.move_to_viewport_line(app.diff_state.viewport_height.max(1) - 1),
         Action::NextComment => app.next_comment(),
         Action::PrevComment => app.prev_comment(),
         Action::ToggleReviewed => app.toggle_reviewed(),

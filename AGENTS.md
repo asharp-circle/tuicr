@@ -232,6 +232,7 @@ Repository-managed agent integrations:
 - **Session loading**: `App::new()` calls manifest-backed persistence helpers to restore previous review
 - **Collaborative session writes**: session JSON saves use a storage lock plus temp-file rename, with stale sidecar lock recovery if a process crashes while holding the lock. The TUI keeps a persisted-session snapshot so polling, `:e`, and autosave can merge external `tuicr review add` comments without overwriting local edits.
 - **Clipboard**: Uses `arboard` crate for cross-platform clipboard support
+- **Viewport navigation**: normal-mode `H`/`M`/`L` move to the top/middle/bottom visible diff row without scrolling; wrapped rows use rendered heights. `s`/`S` jump to the next/previous comment.
 - **Hunk navigation**: `next_hunk()`/`prev_hunk()` calculate positions by iterating through files
 - **Ignore filtering**: `.tuicrignore` is applied whenever diffs are loaded/reloaded
 - **File-tree filters**: `i`/`e` regex filters narrow the tree *and* the diff at render/measure

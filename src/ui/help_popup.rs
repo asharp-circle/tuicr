@@ -174,10 +174,17 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
         ]),
         Line::from(vec![
             Span::styled(
-                "  m/M       ",
+                "  s/S       ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Span::raw("Jump to next/previous comment"),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "  H/M/L     ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Move to top/middle/bottom visible diff line"),
         ]),
         Line::from(vec![
             Span::styled(
@@ -268,7 +275,9 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
                 format!("  {leader}{leader} / C-p  "),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(format!("Open fuzzy file picker modal (also `:files`, {leader}p)")),
+            Span::raw(format!(
+                "Open fuzzy file picker modal (also `:files`, {leader}p)"
+            )),
         ]),
         Line::from(vec![
             Span::styled(
@@ -776,7 +785,9 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
                 "  :files    ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(format!("Open fuzzy file picker modal ({leader}{leader}, C-p, {leader}p)")),
+            Span::raw(format!(
+                "Open fuzzy file picker modal ({leader}{leader}, C-p, {leader}p)"
+            )),
         ]),
         Line::from(vec![
             Span::styled(
