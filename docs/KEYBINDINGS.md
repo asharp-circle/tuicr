@@ -279,7 +279,7 @@ In command mode,
 | `<leader>Q` | Close tuicr (warns on unsaved comments; discards review-only state) |
 | `?` | Toggle help |
 
-Dual numbers show rendered-row distance first, then the absolute source line in both diff views (old line for deletions, new line otherwise). The cursor row shows distance zero. Dual mode takes precedence over relative-only mode; disabling it restores the existing relative-number setting.
+Dual numbers show the absolute source line first, then the relative rendered-row distance in both diff views (old line for deletions, new line otherwise). The cursor row shows distance zero. Dual mode takes precedence over relative-only mode; disabling it restores the existing relative-number setting.
 
 Pressing bare `q` no longer quits by default; it prints a reminder to use `:q` instead. Set
 `q_quits = true` to restore `q` as a quit key in review modes.

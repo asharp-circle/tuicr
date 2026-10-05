@@ -101,7 +101,7 @@ pub(super) fn dual_line_number_field(
     source_line
         .map(|line| {
             format!(
-                "{:>width$} {line:>width$} ",
+                "{line:>width$} {:>width$} ",
                 line_idx.abs_diff(current_line_idx)
             )
         })
@@ -116,11 +116,11 @@ mod relative_line_number_tests {
     fn should_render_dual_numbers() {
         assert_eq!(
             super::dual_line_number_field(Some(100), 14, 10, 7),
-            "  4 100 "
+            "100   4 "
         );
         assert_eq!(
             super::dual_line_number_field(Some(100), 10, 10, 7),
-            "  0 100 "
+            "100   0 "
         );
         assert_eq!(super::dual_line_number_field(None, 14, 10, 7), "        ");
     }
