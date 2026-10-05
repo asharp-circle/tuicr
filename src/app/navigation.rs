@@ -1055,7 +1055,10 @@ impl App {
             0
         };
         for summary in &self.forge_review_summaries {
-            height += crate::forge::remote_comments::summary_display_lines(summary);
+            height += crate::forge::remote_comments::summary_display_lines(
+                summary,
+                self.diff_state.viewport_width,
+            );
         }
         for comment in &self.session.review_comments {
             height += Self::comment_display_lines(comment, self.diff_state.viewport_width);
@@ -1543,7 +1546,7 @@ impl App {
         let visual_lines: usize = comment
             .content
             .split('\n')
-            .map(|line| crate::ui::comment_panel::wrap_segments(line, content_area).len())
+            .map(|line| crate::ui::comment_panel::wrap_comment_segments(line, content_area).len())
             .sum();
         2 + visual_lines // top border + visual segments + bottom border
     }

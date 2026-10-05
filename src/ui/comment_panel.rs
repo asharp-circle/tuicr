@@ -51,6 +51,33 @@ pub(crate) fn wrap_segments(text: &str, content_area: usize) -> Vec<&str> {
     segments
 }
 
+/// Wrap comment text at word boundaries, preserving bytes for editor offsets.
+/// Words may exceed 80 columns; only the pane width forces a split.
+pub(crate) fn wrap_comment_segments(text: &str, content_area: usize) -> Vec<&str> {
+    let limit = content_area.min(80);
+    if limit == 0 || text.width() <= limit {
+        return vec![text];
+    }
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut end = 0;
+    for word in text.split_inclusive(char::is_whitespace) {
+        let next = end + word.len();
+        if end > start && text[start..next].trim_end().width() > limit {
+            segments.push(&text[start..end]);
+            start = end;
+        }
+        end = next;
+    }
+    if start < text.len() {
+        segments.push(&text[start..]);
+    }
+    segments
+        .into_iter()
+        .flat_map(|segment| wrap_segments(segment, content_area))
+        .collect()
+}
+
 /// Emit spans covering `line_text[start..end)` using the per-line markdown
 /// highlight `runs` (concatenation of run text equals `line_text`). Falls back
 /// to a single unstyled span when highlighting is unavailable. Offsets are byte
@@ -218,7 +245,7 @@ pub fn format_comment_input_lines(
 
             // Pre-wrap this logical line into segments so ratatui never wraps it.
             // Short lines come back as a single-element vec.
-            let segments = wrap_segments(text, content_area);
+            let segments = wrap_comment_segments(text, content_area);
             let mut seg_byte_start = 0usize;
 
             for (seg_idx, seg) in segments.iter().enumerate() {
@@ -362,7 +389,7 @@ pub fn format_remote_thread_lines(
         for line in comment
             .body
             .split('\n')
-            .flat_map(|line| wrap_segments(line, width.saturating_sub(10)))
+            .flat_map(|line| wrap_comment_segments(line, width.saturating_sub(10)))
         {
             result.push(Line::from(vec![
                 Span::styled("    │  ".to_string(), border_style),
@@ -411,6 +438,7 @@ pub fn format_remote_thread_lines(
 pub fn format_remote_review_summary_lines(
     theme: &Theme,
     summary: &crate::forge::remote_comments::RemoteReviewSummary,
+    width: usize,
     forge_kind: Option<ForgeKind>,
 ) -> Vec<Line<'static>> {
     let badge_fg = theme.diff_hunk_header;
@@ -436,7 +464,11 @@ pub fn format_remote_review_summary_lines(
         Span::styled("─".repeat(28), border_style),
     ]));
 
-    for line in summary.body.split('\n') {
+    for line in summary
+        .body
+        .split('\n')
+        .flat_map(|line| wrap_comment_segments(line, width.saturating_sub(10)))
+    {
         result.push(Line::from(vec![
             Span::styled("    │  ".to_string(), border_style),
             Span::styled(line.to_string(), body_style),
@@ -470,6 +502,15 @@ pub(crate) fn markdown_body_lines(
     content: &str,
     content_area: usize,
 ) -> Vec<Line<'static>> {
+    markdown_body_lines_with_wrapper(theme, content, content_area, wrap_segments)
+}
+
+fn markdown_body_lines_with_wrapper(
+    theme: &Theme,
+    content: &str,
+    content_area: usize,
+    wrapper: fn(&str, usize) -> Vec<&str>,
+) -> Vec<Line<'static>> {
     let lines: Vec<&str> = content.split('\n').collect();
     // Highlight the body as a whole so multi-line constructs (e.g. fenced code)
     // carry state across lines.
@@ -479,7 +520,7 @@ pub(crate) fn markdown_body_lines(
     for (idx, text) in lines.iter().enumerate() {
         let runs = highlighted.get(idx).and_then(|o| o.as_deref());
         let mut seg_start = 0usize;
-        for seg in wrap_segments(text, content_area) {
+        for seg in wrapper(text, content_area) {
             let seg_end = seg_start + seg.len();
             out.push(Line::from(highlighted_window_spans(
                 runs, text, seg_start, seg_end,
@@ -569,7 +610,8 @@ pub fn format_comment_lines(
     ]));
 
     // Content lines — markdown-highlighted, pre-wrapped at content_area.
-    let mut body_lines = markdown_body_lines(theme, content, content_area);
+    let mut body_lines =
+        markdown_body_lines_with_wrapper(theme, content, content_area, wrap_comment_segments);
     for line in &mut body_lines {
         line.spans
             .insert(0, Span::styled(BORDER_PREFIX, border_style));
@@ -713,6 +755,64 @@ mod tests {
                 .collect();
             assert!(header.contains(expected), "{header}");
         }
+    }
+
+    #[test]
+    fn comment_wrap_preserves_words_and_bytes() {
+        let text = "hello world again";
+        let segments = wrap_comment_segments(text, 10);
+        assert_eq!(segments, vec!["hello ", "world ", "again"]);
+        assert_eq!(segments.concat(), text);
+    }
+
+    #[test]
+    fn comment_wrap_caps_at_80_and_keeps_long_urls() {
+        let url = format!("https://example.com/{}", "x".repeat(100));
+        let text = format!("{}{url} tail", "word ".repeat(16));
+        let segments = wrap_comment_segments(&text, 200);
+        assert_eq!(segments[0].trim_end().width(), 79);
+        assert_eq!(
+            wrap_comment_segments(&format!("{} tail", "x".repeat(80)), 200)[0]
+                .trim_end()
+                .width(),
+            80
+        );
+        assert_eq!(
+            wrap_comment_segments("hello world", 5),
+            vec!["hello", " ", "world"]
+        );
+        assert_eq!(segments[1], format!("{url} "));
+        assert_eq!(segments[2], "tail");
+        assert_eq!(segments.concat(), text);
+    }
+
+    #[test]
+    fn comment_wrap_whitespace_fits_pane() {
+        for (text, width) in [(" ".repeat(20), 5), (format!("a {}b", " ".repeat(30)), 10)] {
+            let segments = wrap_comment_segments(&text, width);
+            assert_eq!(segments.concat(), text);
+            assert!(segments.iter().all(|segment| segment.width() <= width));
+        }
+    }
+
+    #[test]
+    fn comment_wrap_handles_unicode_and_empty_lines() {
+        assert_eq!(wrap_comment_segments("中文 测试", 5), vec!["中文 ", "测试"]);
+        assert_eq!(wrap_comment_segments("", 80), vec![""]);
+        assert_eq!(wrap_comment_segments("word", 0), vec!["word"]);
+        assert_eq!(
+            wrap_comment_segments("unbroken", 3),
+            vec!["unb", "rok", "en"]
+        );
+    }
+
+    #[test]
+    fn comment_render_height_matches_count_on_wide_panes() {
+        let theme = Theme::dark();
+        let text = "word ".repeat(40);
+        let lines = markdown_body_lines_with_wrapper(&theme, &text, 190, wrap_comment_segments);
+        assert_eq!(lines.len(), wrap_comment_segments(&text, 190).len());
+        assert_eq!(markdown_body_lines(&theme, &text, 190).len(), 2);
     }
 
     // -- wrap_segments tests --
@@ -1254,8 +1354,12 @@ mod tests {
             database_id: None,
         };
 
-        let lines =
-            format_remote_review_summary_lines(&test_theme(), &summary, Some(ForgeKind::GitHub));
+        let lines = format_remote_review_summary_lines(
+            &test_theme(),
+            &summary,
+            120,
+            Some(ForgeKind::GitHub),
+        );
         let header = lines[0]
             .spans
             .iter()

@@ -49,6 +49,7 @@ pub(crate) fn annotation_row_height(app: &App, idx: usize) -> usize {
                 comment_panel::format_remote_review_summary_lines(
                     &app.theme,
                     summary,
+                    app.diff_state.viewport_width,
                     app.forge_kind(),
                 )
                 .into_iter()
@@ -78,7 +79,7 @@ pub(crate) fn annotation_row_height(app: &App, idx: usize) -> usize {
             })
             .map_or(1, |line| formatted_line_height(line, viewport_width)),
 
-        // Pre-wrapped by comment_panel::wrap_segments to inner width - 1.
+        // Pre-wrapped by comment_panel::wrap_comment_segments to inner width - 1.
         AnnotatedLine::ReviewComment { .. }
         | AnnotatedLine::FileComment { .. }
         | AnnotatedLine::LineComment { .. }

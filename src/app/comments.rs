@@ -1316,7 +1316,7 @@ impl App {
         for line in content.split('\n') {
             line_start = byte;
             line_len = line.len();
-            let segs = crate::ui::comment_panel::wrap_segments(line, content_area)
+            let segs = crate::ui::comment_panel::wrap_comment_segments(line, content_area)
                 .len()
                 .max(1);
             if visual_target < visual + segs {

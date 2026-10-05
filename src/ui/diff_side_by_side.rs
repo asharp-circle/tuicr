@@ -370,6 +370,7 @@ pub(super) fn render_side_by_side_diff(frame: &mut Frame, app: &mut App, area: R
     }
 
     let inner = block.inner(area);
+    app.sync_viewport_width(inner.width as usize);
     frame.render_widget(block, area);
 
     // Update viewport height for scroll calculations
@@ -461,6 +462,7 @@ pub(super) fn render_side_by_side_diff(frame: &mut Frame, app: &mut App, area: R
         let summary_lines = comment_panel::format_remote_review_summary_lines(
             &app.theme,
             summary,
+            app.diff_state.viewport_width,
             app.forge_kind(),
         );
         for mut summary_line in summary_lines {
@@ -1098,7 +1100,6 @@ pub(super) fn render_side_by_side_diff(frame: &mut Frame, app: &mut App, area: R
         .max()
         .unwrap_or(0);
 
-    app.sync_viewport_width(inner.width as usize);
     app.diff_state.max_content_width = max_content_width;
 
     let scroll_offset = app.diff_state.scroll_offset;

@@ -254,8 +254,11 @@ pub fn thread_display_comment_indices(
                 .body
                 .split('\n')
                 .map(|line| {
-                    crate::ui::comment_panel::wrap_segments(line, viewport_width.saturating_sub(10))
-                        .len()
+                    crate::ui::comment_panel::wrap_comment_segments(
+                        line,
+                        viewport_width.saturating_sub(10),
+                    )
+                    .len()
                 })
                 .sum::<usize>()
                 + usize::from(!comment.reactions.is_empty()),
@@ -276,10 +279,16 @@ pub fn thread_display_lines(thread: &RemoteReviewThread, viewport_width: usize) 
 /// diff view's review-scope area. Layout must match
 /// `ui::comment_panel::format_remote_review_summary_lines`:
 /// - 1 header line (`├── [github @author commented] ──`)
-/// - 1 body line per `\n`-split line in the summary body
+/// - width-dependent wrapped body rows
 /// - 1 footer line (`╰────`)
-pub fn summary_display_lines(summary: &RemoteReviewSummary) -> usize {
-    1 + summary.body.split('\n').count() + 1
+pub fn summary_display_lines(summary: &RemoteReviewSummary, width: usize) -> usize {
+    2 + summary
+        .body
+        .split('\n')
+        .map(|line| {
+            crate::ui::comment_panel::wrap_comment_segments(line, width.saturating_sub(10)).len()
+        })
+        .sum::<usize>()
 }
 
 /// Group threads by file path for export grouping. Preserves the input

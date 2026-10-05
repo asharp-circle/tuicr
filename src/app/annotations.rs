@@ -94,7 +94,10 @@ impl App {
                 .push(AnnotatedLine::ReviewCommentsHeader);
         }
         for (summary_idx, summary) in self.forge_review_summaries.iter().enumerate() {
-            let summary_lines = crate::forge::remote_comments::summary_display_lines(summary);
+            let summary_lines = crate::forge::remote_comments::summary_display_lines(
+                summary,
+                self.diff_state.viewport_width,
+            );
             for _ in 0..summary_lines {
                 self.line_annotations
                     .push(AnnotatedLine::RemoteReviewSummaryLine { summary_idx });

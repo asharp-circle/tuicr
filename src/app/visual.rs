@@ -97,6 +97,7 @@ impl App {
                     comment_panel::format_remote_review_summary_lines(
                         &self.theme,
                         self.forge_review_summaries.get(*summary_idx)?,
+                        self.diff_state.viewport_width,
                         self.forge_kind(),
                     )
                 }
