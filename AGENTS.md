@@ -20,6 +20,7 @@ src/
 ├── app.rs               # Application state (App struct, InputMode, etc.)
 │   ├── coloring.rs      # Render-time syntax coloring of hunks near the viewport
 │   ├── editor_target.rs # Read-only snapshots of a PR revision for `$EDITOR`
+│   ├── copy_url.rs      # Forge permalinks for remote comments and PR diff lines
 │   ├── file_filter.rs   # File-tree include/exclude regex filters + `/` path search
 │   └── file_picker.rs   # Fuzzy file picker modal state and subsequence scoring
 ├── error.rs             # Error types (TuicrError enum)

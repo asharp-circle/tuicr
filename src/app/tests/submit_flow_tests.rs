@@ -1953,6 +1953,8 @@ fn should_yank_remote_comment_from_its_anchor_line_or_thread() {
         })
         .expect("expected remote thread anchor");
     app.diff_state.cursor_line = anchor;
+    assert!(app.url_at_cursor().unwrap().contains("/files#diff-"));
+    assert!(app.url_at_cursor().unwrap().ends_with("R10"));
     assert_eq!(
         app.remote_comment_content_at_cursor(),
         Some("remote comment".to_string())
@@ -1964,6 +1966,10 @@ fn should_yank_remote_comment_from_its_anchor_line_or_thread() {
         .position(|annotation| matches!(annotation, AnnotatedLine::RemoteThreadLine { .. }))
         .expect("expected rendered remote thread");
     app.diff_state.cursor_line = thread;
+    assert_eq!(
+        app.url_at_cursor().as_deref(),
+        Some("https://example.com/comment-1")
+    );
     assert_eq!(
         app.remote_comment_content_at_cursor(),
         Some("remote comment".to_string())
@@ -1981,9 +1987,17 @@ fn should_yank_remote_comment_from_its_anchor_line_or_thread() {
         .expect("expected rendered remote reply");
     app.diff_state.cursor_line = reply;
     assert_eq!(
+        app.url_at_cursor().as_deref(),
+        Some("https://example.com/comment-2")
+    );
+    assert_eq!(
         app.remote_comment_content_at_cursor(),
         Some("remote reply".to_string())
     );
+    app.forge_review_threads[0].comments[1].url.clear();
+    assert!(app.url_at_cursor().is_none());
+    app.diff_source = DiffSource::WorkingTree;
+    assert!(app.url_at_cursor().is_none());
 }
 
 #[test]
