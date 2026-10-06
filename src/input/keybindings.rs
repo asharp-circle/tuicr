@@ -67,6 +67,8 @@ pub enum Action {
     ExportToClipboard,
     /// Copy just the comment under the cursor (`Y`), not the whole review.
     CopyCommentAtCursor,
+    CopyUrlAtCursor,
+    CopyPrUrl,
 
     // Mode changes
     EnterCommandMode,
@@ -276,6 +278,8 @@ fn map_normal_mode_with_q_quits(key: KeyEvent, leader_key: char, q_quits: bool) 
         (KeyCode::Char('v') | KeyCode::Char('V'), _) => Action::EnterVisualMode,
         (KeyCode::Char('y'), KeyModifiers::NONE) => Action::ExportToClipboard,
         (KeyCode::Char('Y'), _) => Action::CopyCommentAtCursor,
+        (KeyCode::Char('u'), KeyModifiers::NONE) => Action::CopyUrlAtCursor,
+        (KeyCode::Char('U'), _) => Action::CopyPrUrl,
         (KeyCode::Char('e'), KeyModifiers::NONE) => Action::EditFile,
         (KeyCode::Char('n'), KeyModifiers::NONE) => Action::SearchNext,
         (KeyCode::Char('N'), _) => Action::SearchPrev,
@@ -844,6 +848,22 @@ mod tests {
         assert_eq!(
             map_normal_mode(key_shift('Y'), DEFAULT_LEADER_KEY),
             Action::CopyCommentAtCursor
+        );
+    }
+
+    #[test]
+    fn should_map_url_copy_hotkeys() {
+        assert_eq!(
+            map_normal_mode(key(KeyCode::Char('u')), DEFAULT_LEADER_KEY),
+            Action::CopyUrlAtCursor
+        );
+        assert_eq!(
+            map_normal_mode(key_shift('U'), DEFAULT_LEADER_KEY),
+            Action::CopyPrUrl
+        );
+        assert_eq!(
+            map_normal_mode(key(KeyCode::Char('U')), DEFAULT_LEADER_KEY),
+            Action::CopyPrUrl
         );
     }
 

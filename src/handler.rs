@@ -1862,6 +1862,15 @@ fn handle_shared_normal_action(app: &mut App, action: Action) {
         Action::EditCommentAtEnd if app.comment_vim_enabled => edit_comment_at_cursor(app, true),
         Action::ExportToClipboard => handle_export(app),
         Action::CopyCommentAtCursor => handle_copy_comment_at_cursor(app),
+        Action::CopyPrUrl => handle_copy_pr_url(app),
+        Action::CopyUrlAtCursor => match app.url_at_cursor() {
+            Some(url) => match copy_text_to_clipboard(&url) {
+                Ok(true) => app.set_message("URL copied to clipboard (via terminal)"),
+                Ok(false) => app.set_message("URL copied to clipboard"),
+                Err(e) => app.set_warning(format!("Failed to copy URL: {e}")),
+            },
+            None => app.set_message("No forge URL at cursor (requires PR mode)"),
+        },
         Action::SearchNext => {
             app.search_next_in_diff();
         }

@@ -1926,6 +1926,7 @@ mod comment_editor;
 mod comment_vim;
 mod comments;
 mod commits;
+mod copy_url;
 mod diff_load;
 mod editor_target;
 mod file_filter;

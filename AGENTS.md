@@ -19,6 +19,7 @@ src/
 │   └── mod.rs           # User config loading (XDG on Unix, %APPDATA% on Windows)
 ├── app.rs               # Application state (App struct, InputMode, etc.)
 │   ├── editor_target.rs # Read-only snapshots of a PR revision for `$EDITOR`
+│   ├── copy_url.rs      # Forge permalinks for remote comments and PR diff lines
 │   ├── file_filter.rs   # File-tree include/exclude regex filters + `/` path search
 │   └── file_picker.rs   # Fuzzy file picker modal state and subsequence scoring
 ├── error.rs             # Error types (TuicrError enum)

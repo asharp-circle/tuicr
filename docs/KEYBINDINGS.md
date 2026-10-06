@@ -165,7 +165,15 @@ Inline comment boxes and comment navigator rows label local drafts **pending**, 
 | `A` | Edit comment at cursor with text cursor at end (vim mode only) |
 | `e` | Edit a local draft or your GitHub inline comment at the diff cursor in `$EDITOR`; otherwise open the focused file |
 | `y` | Copy review to clipboard |
+| `u` | Copy remote comment URL or diff file/line URL (PR mode) |
+| `U` | Copy PR URL (PR mode) |
 | `Y` | Copy the comment at cursor to clipboard |
+
+In Normal mode, `u` copies the permalink of the displayed remote comment or reply.
+On diff lines it copies a GitHub PR diff anchor, or a reviewed revision file/line
+link on GitLab, Gitea, and Bitbucket. Azure DevOps and Gerrit diff-line links
+are not supported. `U` copies the open PR URL from any pane. Local reviews and
+rows without a forge URL leave the clipboard unchanged.
 
 On your GitHub comment rows, including pending review comments, `i`/`A` open inline
 editing and save changes to GitHub.

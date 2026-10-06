@@ -324,6 +324,8 @@ A first-session cheatsheet. Press `?` inside tuicr for the full reference.
 | `R` | Toggle hunk reviewed |
 | `e` | Edit the comment at the diff cursor in `$EDITOR` (local draft or your GitHub inline comment); otherwise open the focused file (in PR review: the reviewed revision) |
 | `y` | Copy review to clipboard |
+| `u` | Copy remote comment URL or diff file/line URL (PR mode) |
+| `U` | Copy PR URL (PR mode) |
 | `<leader><leader>` / `Ctrl-p` / `:files` | Open the fuzzy file picker modal to jump between review files |
 | `<leader>Q` | Close tuicr (warns on unsaved comments) |
 | `:edit` | Open focused file in `$EDITOR` |

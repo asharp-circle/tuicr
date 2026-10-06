@@ -613,6 +613,13 @@ pub fn render_help(frame: &mut Frame, app: &mut App) {
         ]),
         Line::from(vec![
             Span::styled(
+                "  u / U     ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Copy comment/line URL / PR URL (PR mode)"),
+        ]),
+        Line::from(vec![
+            Span::styled(
                 "  e         ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
