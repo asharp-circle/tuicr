@@ -1556,8 +1556,49 @@ impl App {
     /// line_annotations.len() in sync with the rendered Vec<Line>.
     pub fn sync_viewport_width(&mut self, new_width: usize) {
         if self.diff_state.viewport_width != new_width {
+            let anchor = self
+                .line_annotations
+                .get(self.diff_state.cursor_line)
+                .cloned();
+            let occurrence = anchor
+                .as_ref()
+                .map(|anchor| {
+                    self.line_annotations[..self.diff_state.cursor_line]
+                        .iter()
+                        .filter(|line| *line == anchor)
+                        .count()
+                })
+                .unwrap_or(0);
             self.diff_state.viewport_width = new_width;
+            self.diff_state.visible_line_count = 0;
             self.rebuild_annotations();
+            let target = anchor
+                .as_ref()
+                .and_then(|anchor| {
+                    let matches: Vec<_> = self
+                        .line_annotations
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, line)| *line == anchor)
+                        .map(|(idx, _)| idx)
+                        .collect();
+                    matches
+                        .get(occurrence.min(matches.len().saturating_sub(1)))
+                        .copied()
+                })
+                .or_else(|| {
+                    if matches!(anchor, Some(AnnotatedLine::PrInfoLine { .. })) {
+                        self.line_annotations
+                            .iter()
+                            .rposition(|line| matches!(line, AnnotatedLine::PrInfoLine { .. }))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(self.diff_state.cursor_line.min(self.max_cursor_line()));
+            self.diff_state.scroll_offset =
+                self.diff_state.scroll_offset.min(self.max_cursor_line());
+            self.move_cursor_to_annotation(target);
         }
     }
 

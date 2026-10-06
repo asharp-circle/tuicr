@@ -42,12 +42,11 @@ pub(super) fn render_unified_diff(frame: &mut Frame, app: &mut App, area: Rect) 
     }
 
     let inner = block.inner(area);
+    app.diff_state.viewport_height = inner.height as usize;
     app.sync_viewport_width(inner.width as usize);
     let comment_width = inner.width.saturating_sub(1) as usize;
     frame.render_widget(block, area);
 
-    // Update viewport height for scroll calculations
-    app.diff_state.viewport_height = inner.height as usize;
     app.diff_inner_area = Some(inner);
 
     // Reset comment input annotation offset (will be set if a comment input box is rendered)

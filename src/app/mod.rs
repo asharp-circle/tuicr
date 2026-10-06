@@ -285,7 +285,7 @@ pub enum GapCursorHit {
 }
 
 /// Describes what a rendered line represents - built once and used for O(1) cursor queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnnotatedLine {
     /// A rendered line of [`App::pr_info`] content
     PrInfoLine { line_idx: usize },

@@ -2947,3 +2947,129 @@ fn should_discard_stale_remote_threads_event_after_switching_pr() {
     // then — stale result was dropped
     assert!(app.forge_review_threads.is_empty());
 }
+
+#[test]
+fn should_preserve_pr_reload_viewport_and_anchor_across_resize() {
+    let _reviews = TestReviewsDir::new();
+    for wrap_lines in [false, true] {
+        let mut app = build_app();
+        let summary = sample_pr(424249, "head-a");
+        let mut details = test_pr_details(424249, "head-a");
+        details.body = "A substantial PR description with metadata and wrapping. ".repeat(100);
+        app.open_pr_with_backend(
+            &summary,
+            Box::new(FakeForgeBackend::open_pr_details(
+                details.clone(),
+                two_file_patch("new changed"),
+            )),
+            None,
+        )
+        .unwrap();
+        app.diff_state.viewport_height = 24;
+        app.diff_state.wrap_lines = wrap_lines;
+        app.sync_viewport_width(100);
+        let line = app
+            .line_annotations
+            .iter()
+            .position(|ann| {
+                matches!(
+                    ann,
+                    AnnotatedLine::DiffLine {
+                        new_lineno: Some(_),
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        app.move_cursor_to_annotation(line);
+        let anchor = app.capture_pr_cursor_anchor().unwrap();
+        let request = PrReloadRequest {
+            repository: details.repository.clone(),
+            pr_number: details.number,
+            head_sha: details.head_sha.clone(),
+            started_at: Instant::now(),
+            anchor: Some(anchor.clone()),
+            restore_overview_cursor: None,
+        };
+        details.head_sha = "bbbbbbbbbbbbbbbb".to_string();
+        app.finish_pr_reload(
+            details.clone(),
+            structured_patch(&two_file_patch("newer changed")),
+            Vec::new(),
+            PullRequestReviewMetadata::default(),
+            crate::forge::traits::PullRequestInfo::from_details(details),
+            &request,
+        )
+        .unwrap();
+        assert_eq!(app.diff_state.viewport_width, 100);
+        assert_eq!(app.diff_state.viewport_height, 24);
+        assert_eq!(app.diff_state.wrap_lines, wrap_lines);
+        for width in [100, 40, 120] {
+            app.sync_viewport_width(width);
+            let restored = app.capture_pr_cursor_anchor().unwrap();
+            assert_eq!(restored.path, anchor.path);
+            assert_eq!(restored.new_lineno, anchor.new_lineno);
+            assert!(app.diff_state.scroll_offset < app.line_annotations.len());
+            assert!(app.diff_state.cursor_line >= app.diff_state.scroll_offset);
+        }
+    }
+}
+
+#[test]
+fn should_keep_non_code_cursor_index_on_width_change() {
+    let mut app = build_app();
+    let mut details = test_pr_details(424250, "head-a");
+    details.body = "A wrapping description above the hunk. ".repeat(100);
+    app.open_pr_with_backend(
+        &sample_pr(424250, "head-a"),
+        Box::new(FakeForgeBackend::open_pr_details(
+            details,
+            two_file_patch("new changed"),
+        )),
+        None,
+    )
+    .unwrap();
+    app.diff_state.viewport_height = 24;
+    app.sync_viewport_width(100);
+    let line = app
+        .line_annotations
+        .iter()
+        .position(|ann| matches!(ann, AnnotatedLine::HunkHeader { .. }))
+        .unwrap();
+    app.move_cursor_to_annotation(line);
+    let anchor = app.line_annotations[line].clone();
+    app.diff_state.visible_line_count = 24;
+    app.sync_viewport_width(40);
+    assert_eq!(app.line_annotations[app.diff_state.cursor_line], anchor);
+    assert!(app.diff_state.scroll_offset < app.line_annotations.len());
+}
+
+#[test]
+fn should_keep_deep_pr_description_cursor_in_info_section_after_widening() {
+    let mut app = build_app();
+    let mut details = test_pr_details(424251, "head-a");
+    details.body = "A long description that wraps into many rows. ".repeat(100);
+    app.open_pr_with_backend(
+        &sample_pr(424251, "head-a"),
+        Box::new(FakeForgeBackend::open_pr_details(
+            details,
+            two_file_patch("new changed"),
+        )),
+        None,
+    )
+    .unwrap();
+    app.diff_state.viewport_height = 24;
+    app.sync_viewport_width(20);
+    let line = app
+        .line_annotations
+        .iter()
+        .rposition(|ann| matches!(ann, AnnotatedLine::PrInfoLine { .. }))
+        .unwrap();
+    app.move_cursor_to_annotation(line);
+    app.sync_viewport_width(120);
+    assert!(matches!(
+        app.line_annotations[app.diff_state.cursor_line],
+        AnnotatedLine::PrInfoLine { .. }
+    ));
+    assert!(app.diff_state.scroll_offset <= app.diff_state.cursor_line);
+}

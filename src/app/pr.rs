@@ -87,7 +87,12 @@ impl App {
         self.show_commit_selector = false;
         self.range_diff_files = None;
         self.saved_inline_selection = None;
-        self.diff_state = DiffState::default();
+        self.diff_state = DiffState {
+            viewport_width: self.diff_state.viewport_width,
+            viewport_height: self.diff_state.viewport_height,
+            wrap_lines: self.diff_state.wrap_lines,
+            ..DiffState::default()
+        };
         self.pr_info = Some(pr_info);
 
         // PR mode populates the inline selector with the PR's commits when
@@ -118,7 +123,7 @@ impl App {
     /// land back here after `:e` rebuilds the diff. Returns `None` when
     /// the cursor isn't on a diff line (e.g., it's on a header / comment
     /// / hunk header / expander).
-    fn capture_pr_cursor_anchor(&self) -> Option<PrCursorAnchor> {
+    pub(super) fn capture_pr_cursor_anchor(&self) -> Option<PrCursorAnchor> {
         let annotation = self.line_annotations.get(self.diff_state.cursor_line)?;
         let (file_idx, old_lineno, new_lineno) = match annotation {
             AnnotatedLine::DiffLine {
