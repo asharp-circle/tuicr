@@ -180,14 +180,16 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let base_right_width = base_source_width + stat_width + update_width;
 
     // Available space between the brand and the baseline right cluster (with minimum 2-cell gap).
+    // The file name has layout priority: when it does not fit beside the full
+    // metadata, only the stats and update badge are reserved.
     let avail_between = total_width.saturating_sub(brand_width + base_right_width + 2);
+    let avail_priority = total_width.saturating_sub(brand_width + stat_width + update_width + 2);
 
     let file_path_label = if sole {
-        if app.is_cursor_in_overview() || app.current_file_path().is_none() {
-            Some("Overview".to_string())
-        } else {
-            app.current_file_path().map(|p| p.display().to_string())
-        }
+        Some(match app.top_visible_file_path() {
+            Some(p) => p.display().to_string(),
+            None => "Overview".to_string(),
+        })
     } else {
         None
     };
@@ -214,9 +216,9 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             );
             (Some(span), width, title_limit)
         } else {
-            // Full file path does not fit in avail_between: omit PR title so file path gets
-            // maximum room.
-            let avail_for_path = avail_between.saturating_sub(2);
+            // Full path does not fit beside metadata: give the path priority and
+            // squeeze the metadata cluster (right chunks are dropped below).
+            let avail_for_path = avail_priority.min(needed_file_width).saturating_sub(2);
             let truncated = crate::ui::diff_view::truncate_path_smart(raw_label, avail_for_path);
             let text = format!(" {truncated} ");
             let width = text.chars().count();
@@ -243,7 +245,19 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         (None, 0, title_limit)
     };
 
-    let chunks = build_chunks(final_title_limit);
+    let mut chunks = build_chunks(final_title_limit);
+    let fixed = brand_width + file_width + stat_width + update_width;
+    let chunks_width = |c: &[String]| -> usize {
+        if c.is_empty() {
+            0
+        } else {
+            c.iter().map(|s| s.chars().count()).sum::<usize>() + (c.len() - 1) * 3 + 2
+        }
+    };
+    // Drop trailing metadata (slug, commit range) until the file name fits.
+    while !chunks.is_empty() && fixed + chunks_width(&chunks) > total_width {
+        chunks.pop();
+    }
     let source_text = if chunks.is_empty() {
         String::new()
     } else {
@@ -1090,8 +1104,23 @@ mod header_snapshot_tests {
 
         assert!(line.contains("TriggersController.java"), "got: {line:?}");
         assert!(line.contains("PR Mode"), "got: {line:?}");
-        assert!(line.contains("agavra/tuicr#125"), "got: {line:?}");
         assert!(!line.contains("gh:agavra/tuicr/pr/125"), "got: {line:?}");
+    }
+
+    #[test]
+    fn should_show_top_visible_file_and_drop_metadata_for_long_path() {
+        let mut app = build_pr_app(pr_source(false, false));
+        app.show_file_list = false;
+        app.diff_files = vec![
+            make_test_diff_file("a.rs"),
+            make_test_diff_file("some/very/long/path/to/the/ImportantFile.java"),
+        ];
+        let top = app.total_lines() - 1;
+        app.diff_state.scroll_offset = top;
+        app.diff_state.cursor_line = 0;
+
+        let line = row_text(&draw_header_with_width(&app, 70), 0);
+        assert!(line.contains("ImportantFile.java"), "got: {line:?}");
     }
 
     #[test]
