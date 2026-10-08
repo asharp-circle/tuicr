@@ -895,3 +895,27 @@ fn should_re_resolve_revision_expression_on_reload() {
     assert_eq!(app.review_commits[0].id, "c3");
     assert_eq!(app.commit_selection_range, Some((0, 2)));
 }
+
+#[test]
+fn should_keep_explicit_revision_target_only_for_unnarrowed_range() {
+    let target = RevisionDiffTarget::Explicit {
+        base: Some("mb".to_string()),
+        head: "c2".to_string(),
+    };
+    let full = DiffSource::CommitRange(vec!["c1".to_string(), "c2".to_string()]);
+    let subset = DiffSource::CommitRange(vec!["c2".to_string()]);
+
+    assert_eq!(
+        App::target_for_fetch(&full, &full, Some(&target)),
+        Some(target.clone())
+    );
+    assert_eq!(App::target_for_fetch(&full, &subset, Some(&target)), None);
+    assert_eq!(
+        App::target_for_fetch(
+            &DiffSource::WorkingTree,
+            &DiffSource::WorkingTree,
+            Some(&target)
+        ),
+        None
+    );
+}

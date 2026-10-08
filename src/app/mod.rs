@@ -1174,6 +1174,10 @@ pub struct App {
     /// new commits and a moved HEAD show up. Cleared when the user switches to a
     /// different commit selection.
     revision_expression: Option<String>,
+    /// Resolved diff boundary of `revision_expression`, so a full-range reload
+    /// compares against the true base (e.g. merge-base) instead of the oldest
+    /// listed commit's parent. Cleared together with `revision_expression`.
+    revision_diff_target: Option<RevisionDiffTarget>,
     pub(crate) ephemeral_session_paths: HashSet<PathBuf>,
     pub diff_files: Vec<DiffFile>,
     pub diff_source: DiffSource,
