@@ -828,9 +828,87 @@ impl App {
         (self.diff_files.len(), invalidated)
     }
 
+    /// Re-resolves the startup `-r` expression. When the commit list changed
+    /// (new HEAD, rewritten history), installs the new range, its session, and
+    /// the commit pane with the full range selected.
+    fn refresh_revision_range(&mut self) -> Result<bool> {
+        let Some(expression) = self.revision_expression.clone() else {
+            return Ok(false);
+        };
+        let with_worktree = match &self.diff_source {
+            DiffSource::CommitRange(_) => false,
+            DiffSource::StagedUnstagedAndCommits(_) => true,
+            _ => return Ok(false),
+        };
+        // A failed resolve (deleted ref, empty range) keeps the current review.
+        let Ok(resolved) = self.vcs.resolve_revision_range(&expression) else {
+            return Ok(false);
+        };
+        let ids = resolved.commit_ids.to_vec();
+        let unchanged = match &self.diff_source {
+            DiffSource::CommitRange(old) | DiffSource::StagedUnstagedAndCommits(old) => *old == ids,
+            _ => true,
+        };
+        if unchanged || ids.is_empty() {
+            return Ok(false);
+        }
+        // Prove the new range loads before replacing any state.
+        if Self::get_commit_range_diff_with_ignore(
+            self.vcs.as_ref(),
+            &self.vcs_info.root_path,
+            &resolved,
+            self.theme.syntax_highlighter(),
+            self.path_filter.as_deref(),
+        )
+        .is_err()
+        {
+            return Ok(false);
+        }
+
+        let commits: Vec<CommitInfo> = self.vcs.get_commits_info(&ids)?.into_iter().rev().collect();
+        let mut rows: Vec<CommitInfo> = self
+            .review_commits
+            .iter()
+            .take_while(|commit| Self::is_special_commit(commit))
+            .cloned()
+            .collect();
+        rows.extend(commits);
+
+        // Keep unsaved local changes of the outgoing session.
+        if self.dirty {
+            let _ = self.save_current_session_merging_external();
+        }
+        self.session = if with_worktree {
+            Self::load_or_create_staged_unstaged_and_commits_session(&self.vcs_info, &ids)
+        } else {
+            Self::load_or_create_commit_range_session(&self.vcs_info, &ids)
+        };
+        self.reset_persisted_session_tracking()?;
+        self.diff_source = if with_worktree {
+            DiffSource::StagedUnstagedAndCommits(ids)
+        } else {
+            DiffSource::CommitRange(ids)
+        };
+        self.commit_selection_range = if rows.is_empty() {
+            None
+        } else {
+            Some((0, rows.len() - 1))
+        };
+        self.review_commits = rows;
+        self.commit_list = self.review_commits.clone();
+        self.visible_commit_count = self.commit_list.len();
+        self.commit_list_cursor = 0;
+        self.commit_list_scroll_offset = 0;
+        self.show_commit_selector = self.review_commits.len() > 1;
+        self.commit_diff_cache.clear();
+        self.saved_inline_selection = None;
+        Ok(true)
+    }
+
     /// Reloads diff files from disk. Returns `(file_count, invalidated_count)` where
     /// `invalidated_count` is the number of previously reviewed files whose content changed.
     pub fn reload_diff_files(&mut self) -> Result<(usize, usize)> {
+        let range_refreshed = self.refresh_revision_range()?;
         let diff_files = self.fetch_diff_files()?;
         let full_reload = !Self::is_strict_commit_selection(
             self.commit_selection_range,
@@ -839,6 +917,9 @@ impl App {
         let invalidated = self.session.invalidated_diff_file_count(&diff_files);
         if full_reload {
             self.persist_diff_reconciliation(&diff_files)?;
+        }
+        if range_refreshed {
+            self.range_diff_files = Some(diff_files.clone());
         }
         let (count, applied_invalidated) = self.apply_diff_files(diff_files);
         Ok((
@@ -958,6 +1039,7 @@ impl App {
 
         self.diff_files = diff_files;
         self.diff_source = DiffSource::StagedUnstagedAndCommits(selected_ids);
+        self.revision_expression = None;
         self.input_mode = InputMode::Normal;
         self.diff_state = DiffState::default();
         self.file_list_state = FileListState::default();

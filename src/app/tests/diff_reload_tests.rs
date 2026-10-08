@@ -23,6 +23,7 @@ struct ScriptedVcs {
     /// call order, so a test can tell a narrowed subrange fetch apart from a
     /// full-range one.
     commit_range_diff_ids: Arc<Mutex<Vec<Vec<String>>>>,
+    resolved_ids: Option<Vec<String>>,
 }
 
 impl ScriptedVcs {
@@ -38,6 +39,7 @@ impl ScriptedVcs {
             grammar_counts: Arc::new(Mutex::new(Vec::new())),
             commit_range_diff_results: RefCell::new(VecDeque::new()),
             commit_range_diff_ids: Arc::new(Mutex::new(Vec::new())),
+            resolved_ids: None,
         }
     }
 
@@ -106,6 +108,17 @@ impl VcsBackend for ScriptedVcs {
             .borrow_mut()
             .pop_front()
             .expect("ScriptedVcs: get_commit_range_diff called more times than scripted")
+    }
+
+    fn resolve_revision_range(&self, _revisions: &str) -> Result<ResolvedRevisionRange<'static>> {
+        Ok(ResolvedRevisionRange::from_owned_commit_ids(
+            self.resolved_ids.clone().unwrap_or_default(),
+            RevisionDiffTarget::CommitList,
+        ))
+    }
+
+    fn get_commits_info(&self, ids: &[String]) -> Result<Vec<CommitInfo>> {
+        Ok(ids.iter().map(|id| make_commit_info(id)).collect())
     }
 
     fn stage_file(&self, _path: &Path) -> Result<()> {
@@ -853,4 +866,29 @@ fn should_fetch_changed_diff_files_keeping_narrowed_commit_selection() {
         [vec!["c3".to_string()]],
         "diff-watch's probe fetch must use the narrowed selection, not the full commit range"
     );
+}
+
+#[test]
+fn should_re_resolve_revision_expression_on_reload() {
+    let files = vec![make_diff_file("c3.rs", FileStatus::Modified, 30)];
+    let mut vcs = ScriptedVcs::new();
+    vcs.resolved_ids = Some(vec!["c1".to_string(), "c2".to_string(), "c3".to_string()]);
+    vcs.push_commit_range_diff(Ok(files.clone()));
+    vcs.push_commit_range_diff(Ok(files.clone()));
+    let seen = vcs.commit_range_diff_ids();
+    let mut app = build_app_with_scripted_vcs(files, vcs);
+    app.diff_source = DiffSource::CommitRange(vec!["c1".to_string(), "c2".to_string()]);
+    app.revision_expression = Some("c1~1...HEAD".to_string());
+    app.review_commits = vec![make_commit_info("c2"), make_commit_info("c1")];
+    app.commit_selection_range = Some((0, 1));
+
+    app.reload_diff_files().expect("reload should succeed");
+
+    assert_eq!(
+        seen.lock().expect("poisoned").as_slice(),
+        [vec!["c1".to_string(), "c2".to_string(), "c3".to_string()]; 2]
+    );
+    assert_eq!(app.review_commits.len(), 3);
+    assert_eq!(app.review_commits[0].id, "c3");
+    assert_eq!(app.commit_selection_range, Some((0, 2)));
 }

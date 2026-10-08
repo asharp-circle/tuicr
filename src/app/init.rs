@@ -212,6 +212,7 @@ impl App {
                     options.repo_url_override.clone(),
                 )?
                 .with_vcs_open_options(options.vcs_open_options());
+                app.revision_expression = Some(revisions.to_string());
 
                 app.range_diff_files = Some(app.diff_files.clone());
                 app.commit_list = all_commits.clone();
@@ -274,6 +275,7 @@ impl App {
                 options.repo_url_override.clone(),
             )?
             .with_vcs_open_options(options.vcs_open_options());
+            app.revision_expression = Some(revisions.to_string());
 
             // Set up inline commit selector for multi-commit reviews
             if review_commits.len() > 1 {
@@ -485,6 +487,7 @@ impl App {
             last_diff_watch_error: None,
             diff_watch_reload: None,
             vcs_open_options: VcsOpenOptions::default(),
+            revision_expression: None,
             ephemeral_session_paths: HashSet::new(),
             diff_files,
             diff_source,
