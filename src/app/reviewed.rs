@@ -74,6 +74,27 @@ impl App {
         self.current_file().map(|f| f.display_path())
     }
 
+    /// File containing the topmost visible diff line (from `scroll_offset`),
+    /// or `None` when that line is in the review-comments overview.
+    pub fn top_visible_file_path(&self) -> Option<&PathBuf> {
+        if self.is_single_file_view {
+            return self.current_file_path();
+        }
+        let top = self.diff_state.scroll_offset;
+        let mut cumulative = self.review_comments_render_height();
+        if top < cumulative {
+            return None;
+        }
+        for (i, file) in self.diff_files.iter().enumerate() {
+            let height = self.file_render_height(i, file);
+            if cumulative + height > top {
+                return Some(file.display_path());
+            }
+            cumulative += height;
+        }
+        self.diff_files.last().map(|f| f.display_path())
+    }
+
     /// Takes the queued editor target after action dispatch.
     ///
     /// The main event loop consumes this after leaving raw mode and the
