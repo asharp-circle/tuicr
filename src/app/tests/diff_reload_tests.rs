@@ -886,7 +886,10 @@ fn should_re_resolve_revision_expression_on_reload() {
 
     assert_eq!(
         seen.lock().expect("poisoned").as_slice(),
-        [vec!["c1".to_string(), "c2".to_string(), "c3".to_string()]; 2]
+        [
+            vec!["c1".to_string(), "c2".to_string(), "c3".to_string()],
+            vec!["c1".to_string(), "c2".to_string(), "c3".to_string()]
+        ]
     );
     assert_eq!(app.review_commits.len(), 3);
     assert_eq!(app.review_commits[0].id, "c3");
