@@ -957,6 +957,7 @@ impl App {
         // Update app state
         self.diff_files = diff_files;
         self.diff_source = DiffSource::CommitRange(selected_ids);
+        self.revision_expression = None;
         self.input_mode = InputMode::Normal;
 
         // Reset navigation state

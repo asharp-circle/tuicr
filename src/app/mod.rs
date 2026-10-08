@@ -1170,6 +1170,10 @@ pub struct App {
     /// `App::new`. Kept as one value so a future setting is added in one
     /// place rather than at every construction path.
     vcs_open_options: VcsOpenOptions,
+    /// The `-r` expression the review was opened with. Reloads re-resolve it so
+    /// new commits and a moved HEAD show up. Cleared when the user switches to a
+    /// different commit selection.
+    revision_expression: Option<String>,
     pub(crate) ephemeral_session_paths: HashSet<PathBuf>,
     pub diff_files: Vec<DiffFile>,
     pub diff_source: DiffSource,
