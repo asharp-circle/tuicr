@@ -29,6 +29,7 @@ ignore_whitespace = "auto" # or true / false; omitted defaults to false
 commit_order = "descending"
 initial_commit_selection = "all"
 show_file_list = true
+powerline = false
 compact_folders = false
 show_pr_checks = false
 show_pr_comments = true
@@ -94,6 +95,7 @@ session_header = true
 | `initial_commit_selection` | `all`        | Which commits are selected when a local multi-commit review first opens: `all`, or `oldest` to start on just the oldest commit and walk forward with `(` / `)`. PR reviews always open with all commits selected.  |
 | `ignore_whitespace`        | `false`      | Whitespace comparison for local Git, jj, and hg diffs: `false` compares normally, `true` ignores all whitespace, and `"auto"` chooses by file extension. PR diffs are unchanged. See [Whitespace comparison](#whitespace-comparison). |
 | `ignore_whitespace_overrides` | (none)    | Table of extension-to-boolean overrides, used only with `ignore_whitespace = "auto"`. `true` ignores whitespace; `false` compares normally. |
+| `powerline`                | `false`      | Render the header and status bar as Powerline segments (requires a Nerd Font). Segment colors come from the optional theme keys `segment_primary` and `segment_secondary`. |
 | `show_file_list`           | `true`       | Whether the file list panel is visible on startup. Toggle with `<leader>e`.                                                                                |
 | `compact_folders` | `false` | Join single-child directory chains into one file-tree row. Restart tuicr after changing this setting. |
 | `show_pr_checks`           | `false`      | Whether PR CI checks are fetched and shown. Set to `true` to include GitHub check rollups.                                                           |
@@ -178,7 +180,7 @@ mode_bg = "#82aaff"
 
 Notes:
 
-- Every listed color key is required.
+- Every listed color key is required, except `segment_primary` and `segment_secondary` (Powerline segments): they default to `mode_bg` and `border_focused`.
 - Color values accept named terminal colors or `#RRGGBB`.
 - `syntax_theme` is optional. When present it must point to a local `.tmTheme` file.
 - Relative `syntax_theme` paths resolve relative to the local theme TOML file.

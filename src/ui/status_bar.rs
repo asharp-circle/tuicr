@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use ratatui::{
     Frame,
     layout::Rect,
+    style::Color,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
@@ -58,6 +59,65 @@ pub fn build_right_aligned_spans<'a>(
         left_spans.push(message_span);
     }
     left_spans
+}
+
+const PL_RIGHT: &str = "\u{e0b0}";
+const PL_LEFT: &str = "\u{e0b2}";
+
+fn pl_seg(text: String, bg: Color, theme: &Theme) -> Span<'static> {
+    Span::styled(
+        text,
+        Style::default()
+            .fg(theme.mode_fg)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+/// Powerline separator: foreground is the adjacent segment's background.
+fn pl_sep(glyph: &'static str, fg: Color, bg: Color) -> Span<'static> {
+    Span::styled(glyph, Style::default().fg(fg).bg(bg))
+}
+
+fn spans_width(spans: &[Span]) -> usize {
+    spans.iter().map(|s| s.content.width()).sum()
+}
+
+fn powerline_header_spans(
+    theme: &Theme,
+    chunks: &[String],
+    file_label: Option<String>,
+    tail: Vec<Span<'static>>,
+    total_width: usize,
+) -> Vec<Span<'static>> {
+    let (primary, secondary, bar) = (
+        theme.segment_primary(),
+        theme.segment_secondary(),
+        theme.status_bar_bg,
+    );
+    let first = chunks.first().cloned().unwrap_or_default();
+    let mut left = vec![pl_seg(format!(" tuicr \u{00b7} {first} "), primary, theme)];
+    if let Some(file) = file_label {
+        left.push(pl_sep(PL_RIGHT, primary, secondary));
+        left.push(pl_seg(format!(" {file} "), secondary, theme));
+        left.push(pl_sep(PL_RIGHT, secondary, bar));
+    } else {
+        left.push(pl_sep(PL_RIGHT, primary, bar));
+    }
+    let mut right = Vec::new();
+    if chunks.len() > 1 {
+        right.push(pl_sep(PL_LEFT, secondary, bar));
+        right.push(pl_seg(
+            format!(" {} ", chunks[1..].join(" \u{00b7} ")),
+            secondary,
+            theme,
+        ));
+    }
+    right.extend(tail);
+    let pad = total_width.saturating_sub(spans_width(&left) + spans_width(&right));
+    left.push(Span::raw(" ".repeat(pad)));
+    left.extend(right);
+    left
 }
 
 pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
@@ -258,6 +318,22 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     while !chunks.is_empty() && fixed + chunks_width(&chunks) > total_width {
         chunks.pop();
     }
+    if app.powerline {
+        let file_label = file_path_label.as_ref().map(|l| {
+            // Keep the (possibly truncated) label already sized above.
+            file_span_label(&file_span).unwrap_or_else(|| l.clone())
+        });
+        let mut tail = stat_spans;
+        if update_width > 0 {
+            tail.push(update_span);
+        }
+        let spans = powerline_header_spans(theme, &chunks, file_label, tail, total_width);
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).style(styles::status_bar_style(theme)),
+            area,
+        );
+        return;
+    }
     let source_text = if chunks.is_empty() {
         String::new()
     } else {
@@ -284,6 +360,10 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(Line::from(spans)).style(styles::status_bar_style(theme)),
         area,
     );
+}
+
+fn file_span_label(span: &Option<Span<'static>>) -> Option<String> {
+    span.as_ref().map(|s| s.content.trim().to_string())
 }
 
 /// Short form of the HEAD sha, or `None` when there is no real commit to name.
@@ -376,7 +456,8 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
 
     // In command/search mode, show the input on the left (vim-style)
-    let left_spans = if matches!(app.input_mode, InputMode::Command | InputMode::Search) {
+    let is_input_mode = matches!(app.input_mode, InputMode::Command | InputMode::Search);
+    let left_spans = if is_input_mode {
         let prefix = if app.input_mode == InputMode::Command {
             ":"
         } else {
@@ -428,7 +509,11 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             InputMode::ReactionPicker => " REACT ".to_string(),
         };
 
-        let mode_span = Span::styled(mode_str, styles::mode_style(theme));
+        let mode_span = if app.powerline {
+            pl_seg(mode_str, theme.segment_primary(), theme)
+        } else {
+            Span::styled(mode_str, styles::mode_style(theme))
+        };
 
         let hints: Cow<'static, str> = if app.message.is_some() {
             Cow::Borrowed("")
@@ -492,7 +577,15 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         };
         let hints_span = Span::styled(hints, Style::default().fg(theme.fg_secondary));
 
-        let mut spans = vec![mode_span, hints_span];
+        let mut spans = vec![mode_span];
+        if app.powerline {
+            spans.push(pl_sep(
+                PL_RIGHT,
+                theme.segment_primary(),
+                theme.status_bar_bg,
+            ));
+        }
+        spans.push(hints_span);
         if app.input_mode == InputMode::Normal
             && app.message.is_none()
             && let Some((current, total)) = app.search_match_position()
@@ -576,7 +669,25 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         (Span::raw(""), 0)
     };
     let total_width = area.width as usize;
-    let spans = build_right_aligned_spans(left_spans, right_span, right_width, total_width);
+    let spans = if app.powerline && right_width == 0 && !is_input_mode {
+        let branch = app.vcs_info.branch_name.as_deref().unwrap_or("detached");
+        let text = format!(
+            " {branch} \u{00b7} {}/{} ",
+            app.reviewed_count(),
+            app.file_count()
+        );
+        let width = text.width() + 1;
+        let mut spans = build_right_aligned_spans(left_spans, Span::raw(""), width, total_width);
+        spans.push(pl_sep(
+            PL_LEFT,
+            theme.segment_secondary(),
+            theme.status_bar_bg,
+        ));
+        spans.push(pl_seg(text, theme.segment_secondary(), theme));
+        spans
+    } else {
+        build_right_aligned_spans(left_spans, right_span, right_width, total_width)
+    };
 
     let line = Line::from(spans);
 
@@ -1363,5 +1474,51 @@ mod header_snapshot_tests {
         let buffer = draw_header(&app);
         let line = row_text(&buffer, 0);
         assert!(line.contains("commit abcdef0"), "got: {line:?}");
+    }
+
+    #[test]
+    fn should_render_powerline_header_with_segment_colored_separators() {
+        let mut app = build_pr_app(pr_source(false, false));
+        app.show_file_list = false;
+        app.powerline = true;
+        app.diff_files = vec![make_test_diff_file("src/main.rs")];
+        app.diff_state.current_file_idx = 0;
+
+        let buffer = draw_header_with_width(&app, 140);
+        let line = row_text(&buffer, 0);
+        assert!(line.contains("src/main.rs"), "got: {line:?}");
+        assert!(line.contains("PR Mode"), "got: {line:?}");
+        let sep = (0..140u16)
+            .map(|x| &buffer[(x, 0)])
+            .find(|c| c.symbol() == "\u{e0b0}")
+            .expect("separator");
+        assert_eq!(sep.fg, app.theme.segment_primary());
+        assert_eq!(sep.bg, app.theme.segment_secondary());
+    }
+
+    #[test]
+    fn should_render_powerline_status_bar_mode_pill() {
+        let mut app = build_pr_app(pr_source(false, false));
+        app.powerline = true;
+        let backend = TestBackend::new(260, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| super::render_status_bar(frame, &app, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let line = row_text(&buffer, 0);
+        assert!(line.contains("NORMAL"), "got: {line:?}");
+        assert!(
+            line.contains("\u{e0b0}") && line.contains("\u{e0b2}"),
+            "got: {line:?}"
+        );
+        assert_eq!(buffer[(1, 0)].bg, app.theme.segment_primary());
+    }
+
+    #[test]
+    fn should_not_render_powerline_glyphs_by_default() {
+        let app = build_pr_app(pr_source(false, false));
+        let line = row_text(&draw_header_with_width(&app, 140), 0);
+        assert!(!line.contains('\u{e0b0}'), "got: {line:?}");
     }
 }

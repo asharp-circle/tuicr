@@ -342,6 +342,7 @@ fn main() -> anyhow::Result<()> {
         app.show_pr_comments = cfg.show_pr_comments.unwrap_or(true);
         app.initial_comments_visibility = pr_comments_visibility;
         app.set_compact_folders(cfg.compact_folders.unwrap_or(false));
+        app.powerline = cfg.powerline.unwrap_or(false);
         if cfg.show_file_list == Some(false) {
             app.show_file_list = false;
             app.focused_panel = FocusedPanel::Diff;

@@ -158,6 +158,8 @@ pub struct AppConfig {
     pub backend: Option<String>,
     pub comment_types: Option<Vec<CommentTypeConfig>>,
     pub show_file_list: Option<bool>,
+    /// Render the header and status bar as Powerline-style segments (Nerd Font). Defaults to false.
+    pub powerline: Option<bool>,
     /// Join single-child directory chains in the file tree. Defaults to false.
     pub compact_folders: Option<bool>,
     /// Whether pull-request CI checks are fetched and shown.
@@ -256,6 +258,7 @@ const KNOWN_KEYS: &[&str] = &[
     "backend",
     "comment_types",
     "show_file_list",
+    "powerline",
     "compact_folders",
     "show_pr_checks",
     "show_pr_comments",
@@ -586,6 +589,7 @@ fn load_config_from_path(path: &Path) -> Result<ConfigLoadOutcome> {
             .get("comment_types")
             .and_then(|v| parse_comment_types(v, &mut warnings)),
         show_file_list: read_bool(table, "show_file_list", &mut warnings),
+        powerline: read_bool(table, "powerline", &mut warnings),
         compact_folders: read_bool(table, "compact_folders", &mut warnings),
         show_pr_checks: read_bool(table, "show_pr_checks", &mut warnings),
         show_pr_comments: read_bool(table, "show_pr_comments", &mut warnings),
@@ -1094,6 +1098,16 @@ mod tests {
         let outcome = parse_config("compact_folders = \"yes\"\n");
         assert_eq!(outcome.config.unwrap().compact_folders, None);
         assert_eq!(outcome.warnings.len(), 1);
+    }
+
+    // powerline
+    #[test]
+    fn should_parse_powerline_true() {
+        let outcome = parse_config("powerline = true\n");
+        assert_eq!(
+            outcome.config.as_ref().and_then(|c| c.powerline),
+            Some(true)
+        );
     }
 
     // show_file_list
