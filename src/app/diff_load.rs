@@ -573,13 +573,35 @@ impl App {
             &self.review_commits,
             self.commit_selection_range,
         );
-        Self::fetch_diff_files_for_source(
+        Self::fetch_diff_files_for_source_with_target(
             self.vcs.as_ref(),
             &self.vcs_info.root_path,
             &fetch_source,
+            self.full_range_target(&fetch_source),
             highlighter,
             self.path_filter.as_deref(),
         )
+    }
+
+    /// The explicit revision target, only when `fetch_source` is the whole
+    /// unnarrowed range it was resolved for.
+    fn full_range_target(&self, fetch_source: &DiffSource) -> Option<RevisionDiffTarget> {
+        Self::target_for_fetch(
+            &self.diff_source,
+            fetch_source,
+            self.revision_diff_target.as_ref(),
+        )
+    }
+
+    pub(in crate::app) fn target_for_fetch(
+        diff_source: &DiffSource,
+        fetch_source: &DiffSource,
+        target: Option<&RevisionDiffTarget>,
+    ) -> Option<RevisionDiffTarget> {
+        match (diff_source, fetch_source) {
+            (DiffSource::CommitRange(a), DiffSource::CommitRange(b)) if a == b => target.cloned(),
+            _ => None,
+        }
     }
 
     /// Which `DiffSource` a fetch should run against.
@@ -709,11 +731,34 @@ impl App {
         highlighter: &SyntaxHighlighter,
         path_filter: Option<&str>,
     ) -> Result<Vec<DiffFile>> {
+        Self::fetch_diff_files_for_source_with_target(
+            vcs,
+            root_path,
+            diff_source,
+            None,
+            highlighter,
+            path_filter,
+        )
+    }
+
+    /// Like `fetch_diff_files_for_source`; `range_target` replaces the
+    /// commit-list boundary for `DiffSource::CommitRange`.
+    pub(in crate::app) fn fetch_diff_files_for_source_with_target(
+        vcs: &dyn VcsBackend,
+        root_path: &Path,
+        diff_source: &DiffSource,
+        range_target: Option<RevisionDiffTarget>,
+        highlighter: &SyntaxHighlighter,
+        path_filter: Option<&str>,
+    ) -> Result<Vec<DiffFile>> {
         match diff_source {
             DiffSource::CommitRange(commit_ids) => Self::get_commit_range_diff_with_ignore(
                 vcs,
                 root_path,
-                &ResolvedRevisionRange::from_commit_ids(commit_ids, RevisionDiffTarget::CommitList),
+                &ResolvedRevisionRange::from_commit_ids(
+                    commit_ids,
+                    range_target.unwrap_or(RevisionDiffTarget::CommitList),
+                ),
                 highlighter,
                 path_filter,
             ),
@@ -846,7 +891,10 @@ impl App {
         };
         let ids = resolved.commit_ids.to_vec();
         let unchanged = match &self.diff_source {
-            DiffSource::CommitRange(old) | DiffSource::StagedUnstagedAndCommits(old) => *old == ids,
+            DiffSource::CommitRange(old) => {
+                *old == ids && self.revision_diff_target.as_ref() == Some(&resolved.diff_target)
+            }
+            DiffSource::StagedUnstagedAndCommits(old) => *old == ids,
             _ => true,
         };
         if unchanged || ids.is_empty() {
@@ -884,6 +932,7 @@ impl App {
             Self::load_or_create_commit_range_session(&self.vcs_info, &ids)
         };
         self.reset_persisted_session_tracking()?;
+        self.revision_diff_target = Some(resolved.diff_target.clone());
         self.diff_source = if with_worktree {
             DiffSource::StagedUnstagedAndCommits(ids)
         } else {
@@ -949,10 +998,11 @@ impl App {
             &self.review_commits,
             self.commit_selection_range,
         );
-        Self::changed_diff_files_for_source(
+        Self::changed_diff_files_for_source_with_target(
             self.vcs.as_ref(),
             &self.vcs_info.root_path,
             &fetch_source,
+            self.full_range_target(&fetch_source),
             self.theme.syntax_highlighter(),
             self.path_filter.as_deref(),
             diff_files_fingerprint(&self.diff_files),
@@ -972,6 +1022,7 @@ impl App {
     /// The comparison runs against a parse that skips syntax highlighting first.
     /// That is 98% of the cost and fingerprints identically, so an unchanged
     /// tick costs roughly 3ms instead of 195ms on a 4,000-line diff.
+    #[cfg(test)]
     fn changed_diff_files_for_source(
         vcs: &dyn VcsBackend,
         root_path: &Path,
@@ -980,10 +1031,31 @@ impl App {
         path_filter: Option<&str>,
         current: u64,
     ) -> Result<Option<Vec<DiffFile>>> {
-        let probe = Self::fetch_diff_files_for_source(
+        Self::changed_diff_files_for_source_with_target(
             vcs,
             root_path,
             fetch_source,
+            None,
+            highlighter,
+            path_filter,
+            current,
+        )
+    }
+
+    fn changed_diff_files_for_source_with_target(
+        vcs: &dyn VcsBackend,
+        root_path: &Path,
+        fetch_source: &DiffSource,
+        range_target: Option<RevisionDiffTarget>,
+        highlighter: &SyntaxHighlighter,
+        path_filter: Option<&str>,
+        current: u64,
+    ) -> Result<Option<Vec<DiffFile>>> {
+        let probe = Self::fetch_diff_files_for_source_with_target(
+            vcs,
+            root_path,
+            fetch_source,
+            range_target.clone(),
             probe_highlighter(),
             path_filter,
         )?;
@@ -995,10 +1067,11 @@ impl App {
         // edit that lands between them can be reverted, leaving a fetch that matches
         // the screen again. Applying it would reset collapsed folders and expanded
         // gaps with nothing new to show.
-        let fetched = Self::fetch_diff_files_for_source(
+        let fetched = Self::fetch_diff_files_for_source_with_target(
             vcs,
             root_path,
             fetch_source,
+            range_target,
             highlighter,
             path_filter,
         )?;
@@ -1040,6 +1113,7 @@ impl App {
         self.diff_files = diff_files;
         self.diff_source = DiffSource::StagedUnstagedAndCommits(selected_ids);
         self.revision_expression = None;
+        self.revision_diff_target = None;
         self.input_mode = InputMode::Normal;
         self.diff_state = DiffState::default();
         self.file_list_state = FileListState::default();
@@ -1172,6 +1246,7 @@ impl App {
         let current = diff_files_fingerprint(&self.diff_files);
         let review_commits = self.review_commits.clone();
         let path_filter = self.path_filter.clone();
+        let range_target = self.revision_diff_target.clone();
         let vcs_open_options = self.vcs_open_options.clone();
         let highlighter = self.theme.syntax_highlighter_arc();
 
@@ -1187,6 +1262,7 @@ impl App {
                 vcs_open_options,
                 &request,
                 &review_commits,
+                range_target.as_ref(),
                 path_filter.as_deref(),
                 &highlighter,
                 current,
@@ -1210,6 +1286,7 @@ impl App {
         vcs_open_options: VcsOpenOptions,
         request: &DiffWatchReloadRequest,
         review_commits: &[CommitInfo],
+        revision_diff_target: Option<&RevisionDiffTarget>,
         path_filter: Option<&str>,
         highlighter: &SyntaxHighlighter,
         current: u64,
@@ -1224,10 +1301,13 @@ impl App {
             review_commits,
             request.commit_selection_range,
         );
-        let files = Self::changed_diff_files_for_source(
+        let range_target =
+            Self::target_for_fetch(&request.diff_source, &fetch_source, revision_diff_target);
+        let files = Self::changed_diff_files_for_source_with_target(
             vcs.as_ref(),
             root_path,
             &fetch_source,
+            range_target,
             highlighter,
             path_filter,
             current,

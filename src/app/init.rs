@@ -276,6 +276,7 @@ impl App {
             )?
             .with_vcs_open_options(options.vcs_open_options());
             app.revision_expression = Some(revisions.to_string());
+            app.revision_diff_target = Some(revision_range.diff_target.clone());
 
             // Set up inline commit selector for multi-commit reviews
             if review_commits.len() > 1 {
@@ -488,6 +489,7 @@ impl App {
             diff_watch_reload: None,
             vcs_open_options: VcsOpenOptions::default(),
             revision_expression: None,
+            revision_diff_target: None,
             ephemeral_session_paths: HashSet::new(),
             diff_files,
             diff_source,
