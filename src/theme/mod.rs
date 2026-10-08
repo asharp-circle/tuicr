@@ -92,6 +92,22 @@ pub struct Theme {
     // Mode indicator colors
     pub mode_fg: Color,
     pub mode_bg: Color,
+
+    // Powerline segment colors (optional; see `segment_primary()`)
+    pub segment_primary: Option<Color>,
+    pub segment_secondary: Option<Color>,
+}
+
+impl Theme {
+    /// Powerline primary segment background; falls back to `mode_bg`.
+    pub fn segment_primary(&self) -> Color {
+        self.segment_primary.unwrap_or(self.mode_bg)
+    }
+
+    /// Powerline secondary segment background; falls back to `border_focused`.
+    pub fn segment_secondary(&self) -> Color {
+        self.segment_secondary.unwrap_or(self.border_focused)
+    }
 }
 
 /// Manual `Clone` because `OnceLock` doesn't implement it. The cloned
@@ -145,6 +161,8 @@ impl Clone for Theme {
             update_badge_bg: self.update_badge_bg,
             mode_fg: self.mode_fg,
             mode_bg: self.mode_bg,
+            segment_primary: self.segment_primary,
+            segment_secondary: self.segment_secondary,
         }
     }
 }
@@ -223,6 +241,8 @@ impl Theme {
             // Mode indicator colors
             mode_fg: Color::Black,
             mode_bg: Color::Rgb(90, 200, 255),
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -294,6 +314,8 @@ impl Theme {
             // Mode indicator colors
             mode_fg: Color::White,
             mode_bg: Color::Rgb(0, 80, 160),
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -368,6 +390,8 @@ impl Theme {
 
             mode_fg: base3,
             mode_bg: blue,
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -441,6 +465,8 @@ impl Theme {
 
             mode_fg: base3,
             mode_bg: blue,
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -606,6 +632,8 @@ impl Theme {
             // Mode indicator colors
             mode_fg: Color::White,
             mode_bg: Color::Rgb(255, 106, 0),
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -688,6 +716,8 @@ impl Theme {
 
             mode_fg: bg_dark,
             mode_bg: orange,
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -757,6 +787,8 @@ impl Theme {
             // Mode indicator colors
             mode_fg: Color::Rgb(40, 44, 52),
             mode_bg: Color::Rgb(97, 175, 239),
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -817,6 +849,8 @@ impl Theme {
 
             mode_fg: Color::White,
             mode_bg: Color::Rgb(9, 105, 218),
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -877,6 +911,8 @@ impl Theme {
 
             mode_fg: Color::White,
             mode_bg: Color::Rgb(88, 166, 255),
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -936,6 +972,8 @@ impl Theme {
 
             mode_fg: Color::Rgb(0x01, 0x04, 0x09),
             mode_bg: Color::Rgb(0x39, 0xc5, 0xcf),
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -1013,6 +1051,8 @@ impl Theme {
 
             mode_fg: bg_dark,
             mode_bg: blue,
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -1092,6 +1132,8 @@ impl Theme {
 
             mode_fg: bg,
             mode_bg: blue,
+            segment_primary: None,
+            segment_secondary: None,
         }
     }
 
@@ -1464,6 +1506,8 @@ fn catppuccin_theme(flavor: CatppuccinFlavor, syntect_theme: EmbeddedThemeName) 
         // Mode indicator colors
         mode_fg: accent_fg,
         mode_bg: flavor.lavender,
+        segment_primary: None,
+        segment_secondary: None,
     }
 }
 
@@ -1540,6 +1584,8 @@ fn gruvbox_theme(flavor: GruvboxFlavor) -> Theme {
         // Mode indicator colors
         mode_fg: accent_fg,
         mode_bg: flavor.green,
+        segment_primary: None,
+        segment_secondary: None,
     }
 }
 
@@ -1603,6 +1649,8 @@ fn everforest_theme(flavor: EverforestFlavor) -> Theme {
 
         mode_fg: accent_fg,
         mode_bg: flavor.green,
+        segment_primary: None,
+        segment_secondary: None,
     }
 }
 
@@ -1668,6 +1716,8 @@ fn nord_theme(flavor: NordFlavor) -> Theme {
 
         mode_fg: accent_fg,
         mode_bg: flavor.frost1,
+        segment_primary: None,
+        segment_secondary: None,
     }
 }
 
@@ -2096,6 +2146,14 @@ fn parse_color_value(value: &str) -> Option<Color> {
     })
 }
 
+fn optional_local_theme_color(table: &toml::Table, key: &str) -> Result<Option<Color>, String> {
+    if table.contains_key(key) {
+        require_local_theme_color(table, key).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
 fn require_local_theme_color(table: &toml::Table, key: &str) -> Result<Color, String> {
     let value = table
         .get(key)
@@ -2204,6 +2262,8 @@ const LOCAL_THEME_KEYS: &[&str] = &[
     "update_badge_bg",
     "mode_fg",
     "mode_bg",
+    "segment_primary",
+    "segment_secondary",
 ];
 
 fn load_local_theme_from_path(path: &Path) -> Result<(Theme, Vec<String>), String> {
@@ -2285,6 +2345,8 @@ fn load_local_theme_from_path(path: &Path) -> Result<(Theme, Vec<String>), Strin
         update_badge_bg: require_local_theme_color(table, "update_badge_bg")?,
         mode_fg: require_local_theme_color(table, "mode_fg")?,
         mode_bg: require_local_theme_color(table, "mode_bg")?,
+        segment_primary: optional_local_theme_color(table, "segment_primary")?,
+        segment_secondary: optional_local_theme_color(table, "segment_secondary")?,
     };
 
     Ok((theme, warnings))

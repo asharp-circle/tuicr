@@ -52,3 +52,7 @@ update_badge_bg = "#f2c36b"
 
 mode_fg = "#061827"
 mode_bg = "#4ee3ff"
+
+# Optional: Powerline segment colors (config `powerline = true`)
+segment_primary = "#4ee3ff"
+segment_secondary = "#21c7a8"
