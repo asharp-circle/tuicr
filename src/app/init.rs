@@ -604,6 +604,7 @@ impl App {
             show_file_list: true,
             powerline: false,
             focused: true,
+            dim_bg: Color::Reset,
             compact_folders: false,
             is_pristine_mode: false,
             is_single_file_view: false,

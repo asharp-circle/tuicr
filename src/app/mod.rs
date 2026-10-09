@@ -1394,6 +1394,9 @@ pub struct App {
     pub powerline: bool,
     /// `false` while the terminal reports focus lost; the UI renders dimmed.
     pub focused: bool,
+    /// Color the UI dims toward while unfocused (the theme's real `panel_bg`,
+    /// which `transparent_background` otherwise replaces with `Reset`).
+    pub dim_bg: Color,
     pub compact_folders: bool,
     /// `true` when the session was opened via `--all-files`. Drives the
     /// `PRISTINE · N files` chip in the status bar and prevents that chip
