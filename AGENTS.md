@@ -120,6 +120,7 @@ src/
     ├── pr_info_panel.rs # PR description panel (status, reviewers, checks, body)
     ├── comment_navigator.rs # Sidebar comment index for jumping local/remote comments
     ├── status_bar.rs    # Header, status bar, command line rendering
+    ├── dim.rs           # Unfocused-pane dimming: blends the rendered buffer toward panel_bg on FocusLost
     ├── help_popup.rs    # Help overlay (? key)
     ├── summary_popup.rs # :summary view of pending local-draft comments
     ├── theme_picker.rs  # :theme runtime picker modal (live preview, / filter)

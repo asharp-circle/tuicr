@@ -5,6 +5,7 @@ pub mod commit_row;
 pub mod diff_side_by_side;
 pub mod diff_unified;
 pub mod diff_view;
+pub mod dim;
 pub mod file_list;
 pub mod file_picker;
 pub mod help_popup;
