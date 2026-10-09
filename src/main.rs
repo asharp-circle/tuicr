@@ -480,6 +480,9 @@ fn main() -> anyhow::Result<()> {
             queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
             terminal.draw(|frame| {
                 ui::render(frame, &mut app);
+                if !app.focused {
+                    ui::dim::dim_buffer(frame.buffer_mut(), app.theme.panel_bg);
+                }
             })?;
             // `--line` needs the viewport measured by the render above. When
             // it moves the cursor, repaint inside the same synchronized
@@ -829,6 +832,8 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
+                Event::FocusGained => app.focused = true,
+                Event::FocusLost => app.focused = false,
                 Event::Mouse(mouse_event) => handle_mouse_event(&mut app, mouse_event),
                 Event::Paste(text) => {
                     // Bracketed-paste payload — route to whichever handler is
