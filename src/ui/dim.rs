@@ -19,10 +19,25 @@ fn mix(color: Color, toward: Color, keep_percent: u16) -> Color {
     }
 }
 
+fn is_powerline_separator(symbol: &str) -> bool {
+    symbol
+        .chars()
+        .next()
+        .is_some_and(|c| ('\u{e0b0}'..='\u{e0bf}').contains(&c))
+}
+
 /// Dims all RGB colors in `buf` toward `bg`; non-RGB colors are left as-is.
 pub fn dim_buffer(buf: &mut Buffer, bg: Color) {
     for cell in &mut buf.content {
-        cell.fg = mix(cell.fg, bg, FG_KEEP_PERCENT);
+        // Powerline separators paint a segment edge with their foreground, so
+        // it must dim like a background or the triangle stays brighter than
+        // the segment beside it.
+        let fg_keep = if is_powerline_separator(cell.symbol()) {
+            BG_KEEP_PERCENT
+        } else {
+            FG_KEEP_PERCENT
+        };
+        cell.fg = mix(cell.fg, bg, fg_keep);
         cell.bg = mix(cell.bg, bg, BG_KEEP_PERCENT);
     }
 }
@@ -43,6 +58,15 @@ mod tests {
         dim_buffer(&mut buf, Color::Rgb(0, 0, 0));
         assert_eq!(buf[(0, 0)].fg, Color::Rgb(110, 110, 110));
         assert_eq!(buf[(0, 0)].bg, Color::Rgb(40, 40, 40));
+    }
+
+    #[test]
+    fn should_dim_powerline_separator_foreground_like_a_background() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 1, 1));
+        buf[(0, 0)].set_symbol("\u{e0b0}");
+        buf[(0, 0)].set_style(Style::default().fg(Color::Rgb(100, 100, 100)));
+        dim_buffer(&mut buf, Color::Rgb(0, 0, 0));
+        assert_eq!(buf[(0, 0)].fg, Color::Rgb(40, 40, 40));
     }
 
     #[test]
