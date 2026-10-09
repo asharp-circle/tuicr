@@ -5,7 +5,7 @@ use ratatui::{buffer::Buffer, style::Color};
 /// Percent of the original color kept for foregrounds.
 const FG_KEEP_PERCENT: u16 = 55;
 /// Percent of the original color kept for backgrounds.
-const BG_KEEP_PERCENT: u16 = 75;
+const BG_KEEP_PERCENT: u16 = 40;
 
 fn mix(color: Color, toward: Color, keep_percent: u16) -> Color {
     match (color, toward) {
@@ -42,7 +42,7 @@ mod tests {
         );
         dim_buffer(&mut buf, Color::Rgb(0, 0, 0));
         assert_eq!(buf[(0, 0)].fg, Color::Rgb(110, 110, 110));
-        assert_eq!(buf[(0, 0)].bg, Color::Rgb(75, 75, 75));
+        assert_eq!(buf[(0, 0)].bg, Color::Rgb(40, 40, 40));
     }
 
     #[test]
