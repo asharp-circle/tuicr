@@ -140,6 +140,8 @@ fn main() -> anyhow::Result<()> {
         .as_ref()
         .and_then(|cfg| cfg.transparent_background)
         .unwrap_or(true);
+    // Transparent mode blanks `panel_bg`; keep the real color as the dimming target.
+    let dim_bg = theme.panel_bg;
     if transparent {
         theme.panel_bg = ratatui::style::Color::Reset;
     }
@@ -338,6 +340,7 @@ fn main() -> anyhow::Result<()> {
         .enter(tty_output)?;
 
     // Apply config-driven defaults
+    app.dim_bg = dim_bg;
     if let Some(ref cfg) = config_outcome.config {
         app.show_pr_checks = cfg.show_pr_checks.unwrap_or(false);
         app.show_pr_comments = cfg.show_pr_comments.unwrap_or(true);
@@ -481,7 +484,7 @@ fn main() -> anyhow::Result<()> {
             terminal.draw(|frame| {
                 ui::render(frame, &mut app);
                 if !app.focused {
-                    ui::dim::dim_buffer(frame.buffer_mut(), app.theme.panel_bg);
+                    ui::dim::dim_buffer(frame.buffer_mut(), app.dim_bg);
                 }
             })?;
             // `--line` needs the viewport measured by the render above. When
