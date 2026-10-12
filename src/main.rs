@@ -349,6 +349,7 @@ fn main() -> anyhow::Result<()> {
         app.powerline = cfg.powerline.unwrap_or(false);
         app.mode_icons = cfg.mode_icons.clone();
         app.repo_icons = cfg.repo_icons.clone();
+        app.organization_icons = cfg.organization_icons.clone();
         if cfg.show_file_list == Some(false) {
             app.show_file_list = false;
             app.focused_panel = FocusedPanel::Diff;

@@ -164,6 +164,8 @@ pub struct AppConfig {
     pub mode_icons: BTreeMap<String, String>,
     /// Repository name to icon shown in the pull-request header.
     pub repo_icons: BTreeMap<String, String>,
+    /// Organization (owner) name to icon shown in the pull-request header.
+    pub organization_icons: BTreeMap<String, String>,
     /// Join single-child directory chains in the file tree. Defaults to false.
     pub compact_folders: Option<bool>,
     /// Whether pull-request CI checks are fetched and shown.
@@ -268,6 +270,7 @@ const KNOWN_KEYS: &[&str] = &[
     "powerline",
     "mode_icons",
     "repo_icons",
+    "organization_icons",
     "compact_folders",
     "show_pr_checks",
     "show_pr_comments",
@@ -393,7 +396,7 @@ pub fn load_config() -> Result<ConfigLoadOutcome> {
     Ok(outcome)
 }
 
-/// Optional sibling of `config.toml` holding only `[mode_icons]` / `[repo_icons]`,
+/// Optional sibling of `config.toml` holding only `[mode_icons]` / `[repo_icons]` / `[organization_icons]`,
 /// so generated icon tables stay out of the hand-written config.
 const ICONS_FILE: &str = "icons.toml";
 
@@ -415,6 +418,7 @@ fn merge_icons_file(path: &Path, outcome: &mut ConfigLoadOutcome) {
     for (key, target) in [
         ("mode_icons", &mut config.mode_icons),
         ("repo_icons", &mut config.repo_icons),
+        ("organization_icons", &mut config.organization_icons),
     ] {
         for (name, icon) in read_string_map(&table, key, &mut outcome.warnings) {
             target.entry(name).or_insert(icon);
@@ -662,6 +666,7 @@ fn load_config_from_path(path: &Path) -> Result<ConfigLoadOutcome> {
         powerline: read_bool(table, "powerline", &mut warnings),
         mode_icons: read_string_map(table, "mode_icons", &mut warnings),
         repo_icons: read_string_map(table, "repo_icons", &mut warnings),
+        organization_icons: read_string_map(table, "organization_icons", &mut warnings),
         compact_folders: read_bool(table, "compact_folders", &mut warnings),
         show_pr_checks: read_bool(table, "show_pr_checks", &mut warnings),
         show_pr_comments: read_bool(table, "show_pr_comments", &mut warnings),

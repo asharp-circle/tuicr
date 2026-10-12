@@ -722,9 +722,7 @@ impl ConfirmAction {
         match self {
             ConfirmAction::CopyAndQuit => "Copy review to clipboard?",
             ConfirmAction::DeleteSession => "Delete this saved review?",
-            ConfirmAction::DeleteRemoteComment { .. } => {
-                "Permanently delete your GitHub comment?"
-            }
+            ConfirmAction::DeleteRemoteComment { .. } => "Permanently delete your GitHub comment?",
         }
     }
 }
@@ -1431,6 +1429,8 @@ pub struct App {
     pub mode_icons: BTreeMap<String, String>,
     /// Repository name to icon for the PR header; the name when unmapped.
     pub repo_icons: BTreeMap<String, String>,
+    /// Organization (owner) name to icon for the PR header; the name when unmapped.
+    pub organization_icons: BTreeMap<String, String>,
     /// `false` while the terminal reports focus lost; the UI renders dimmed.
     pub focused: bool,
     /// Color the UI dims toward while unfocused (the theme's real `panel_bg`,

@@ -462,17 +462,24 @@ fn header_source_chunk_with_title_limit(app: &App, max_title_len: Option<usize>)
     }
 }
 
-/// `display_name()` with the trailing repo name swapped for its configured icon.
+/// `display_name()` with the leading organization and trailing repo name swapped for
+/// their configured icons.
 fn repo_label(app: &App, repo: &crate::forge::traits::ForgeRepository) -> String {
     let display = repo.display_name();
-    match (
-        app.repo_icons.get(&repo.name),
-        display.strip_suffix(repo.name.as_str()),
-    ) {
-        (Some(icon), Some(prefix)) if prefix.is_empty() || prefix.ends_with('/') => {
-            format!("{prefix}{icon}")
-        }
-        _ => display,
+    let (prefix, name) = match display.strip_suffix(repo.name.as_str()) {
+        Some(prefix) if prefix.is_empty() || prefix.ends_with('/') => (prefix, repo.name.as_str()),
+        _ => return display,
+    };
+    let owner = prefix.strip_suffix('/').unwrap_or(prefix);
+    let owner = app
+        .organization_icons
+        .get(owner)
+        .map_or(owner, String::as_str);
+    let name = app.repo_icons.get(&repo.name).map_or(name, String::as_str);
+    if prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{owner}/{name}")
     }
 }
 
@@ -1620,6 +1627,11 @@ mod header_snapshot_tests {
         );
         let repo = ForgeRepository::github("github.com", "agavra", "tuicr");
         assert_eq!(super::repo_label(&app, &repo), "agavra/\u{f0ee}");
+        app.organization_icons
+            .insert("agavra".into(), "\u{f0f7}".into());
+        assert_eq!(super::repo_label(&app, &repo), "\u{f0f7}/\u{f0ee}");
+        let other = ForgeRepository::github("github.com", "other", "tuicr");
+        assert_eq!(super::repo_label(&app, &other), "other/\u{f0ee}");
     }
 
     #[test]

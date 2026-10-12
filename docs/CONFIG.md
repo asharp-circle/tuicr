@@ -72,6 +72,9 @@ normal = "N"
 [repo_icons] # optional; unmapped repos show their name
 tuicr = "T"
 
+[organization_icons] # optional; unmapped owners show their name
+crcl-main = "O"
+
 [ignore_whitespace_overrides] # only used with ignore_whitespace = "auto"
 rs = false                    # keep Rust whitespace changes
 custom = true                 # ignore whitespace in *.custom files
@@ -105,6 +108,7 @@ session_header = true
 | `powerline`                | `false`      | Render the header and status bar as Powerline segments (requires a Nerd Font). Segment colors come from the optional theme keys `segment_primary` and `segment_secondary`. |
 | `mode_icons`               | (none)       | Table mapping Vim-style modes to status-bar icons (`normal`, `visual`, and `insert`, which labels comment entry; the `:` and `/` prompts and all other modes keep their text). Unmapped modes keep their text label. Also read from `icons.toml` next to `config.toml`; entries in `config.toml` win. |
 | `repo_icons`               | (none)       | Table mapping bare repository names (not `owner/repo`) to icons that replace the repo name in the PR-mode header (`owner/<icon>#123`). Unmapped repos show the name. Also read from `icons.toml`. |
+| `organization_icons`       | (none)       | Table mapping GitHub organization/owner names to icons that replace the owner in the PR-mode header (`<icon>/<repo>#123`). Unmapped owners show the name. Also read from `icons.toml`. |
 | `show_file_list`           | `true`       | Whether the file list panel is visible on startup. Toggle with `<leader>e`.                                                                                |
 | `compact_folders` | `false` | Join single-child directory chains into one file-tree row. Restart tuicr after changing this setting. |
 | `show_pr_checks`           | `false`      | Whether PR CI checks are fetched and shown. Set to `true` to include GitHub check rollups.                                                           |

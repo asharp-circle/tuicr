@@ -607,6 +607,7 @@ impl App {
             powerline: false,
             mode_icons: BTreeMap::new(),
             repo_icons: BTreeMap::new(),
+            organization_icons: BTreeMap::new(),
             focused: true,
             dim_bg: Color::Reset,
             compact_folders: false,
