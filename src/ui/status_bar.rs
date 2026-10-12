@@ -177,7 +177,17 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             .iter()
             .map(|s| s.content.chars().count())
             .sum::<usize>();
-        (line.spans, w)
+        if app.powerline && w > 0 {
+            let bg = theme.bg_highlight;
+            let mut spans = vec![pl_sep(PL_LEFT, bg, theme.segment_secondary())];
+            spans.extend(line.spans.into_iter().map(|span| {
+                let style = span.style.bg(bg);
+                span.style(style)
+            }));
+            (spans, w + 1)
+        } else {
+            (line.spans, w)
+        }
     } else {
         (Vec::new(), 0)
     };
@@ -687,6 +697,13 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             theme.status_bar_bg,
         ));
         spans.push(pl_seg(text, theme.segment_secondary(), theme));
+        spans
+    } else if app.powerline && right_width > 0 && right_span.style.bg.is_some() {
+        let bg = right_span.style.bg.unwrap_or(theme.status_bar_bg);
+        let mut spans =
+            build_right_aligned_spans(left_spans, Span::raw(""), right_width + 1, total_width);
+        spans.push(pl_sep(PL_LEFT, bg, theme.status_bar_bg));
+        spans.push(right_span);
         spans
     } else {
         build_right_aligned_spans(left_spans, right_span, right_width, total_width)
@@ -1516,6 +1533,47 @@ mod header_snapshot_tests {
             "got: {line:?}"
         );
         assert_eq!(buffer[(1, 0)].bg, app.theme.segment_primary());
+    }
+
+    #[test]
+    fn should_render_powerline_reload_separator() {
+        let pr = pr_source(false, false);
+        let mut app = build_pr_app(pr.clone());
+        app.powerline = true;
+        app.pr_reload_state = Some(crate::app::PrReloadRequest {
+            repository: pr.key.repository,
+            pr_number: pr.key.number,
+            head_sha: pr.key.head_sha,
+            started_at: std::time::Instant::now(),
+            anchor: None,
+            restore_overview_cursor: None,
+        });
+        let mut terminal = Terminal::new(TestBackend::new(260, 1)).unwrap();
+        terminal
+            .draw(|frame| super::render_status_bar(frame, &app, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!(row_text(buffer, 0).contains("Reloading PR"));
+        let sep = (0..260u16)
+            .map(|x| &buffer[(x, 0)])
+            .find(|cell| cell.symbol() == "\u{e0b2}")
+            .expect("reload separator");
+        assert_eq!(sep.fg, app.theme.message_info_bg);
+        assert_eq!(sep.bg, app.theme.status_bar_bg);
+    }
+
+    #[test]
+    fn should_render_powerline_diff_stats_separator() {
+        let mut app = build_pr_app(pr_source(false, false));
+        app.powerline = true;
+        app.show_file_list = false;
+        app.diff_files = vec![make_test_diff_file("src/main.rs")];
+        let buffer = draw_header_with_width(&app, 260);
+        let sep = (0..260u16)
+            .map(|x| &buffer[(x, 0)])
+            .find(|cell| cell.symbol() == "\u{e0b2}" && cell.fg == app.theme.bg_highlight)
+            .expect("diff stats separator");
+        assert_eq!(sep.bg, app.theme.segment_secondary());
     }
 
     #[test]
