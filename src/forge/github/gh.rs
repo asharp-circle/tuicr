@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, TuicrError};
 use crate::forge::local_git::read_blob;
 use crate::forge::local_merge_base;
-use crate::forge::remote_comments::{
-    RemoteReviewComment, RemoteReviewSummary, RemoteReviewThread,
-};
+use crate::forge::remote_comments::{RemoteReviewComment, RemoteReviewSummary, RemoteReviewThread};
 use crate::forge::traits::{
     ForgeBackend, ForgeFileLinesRequest, ForgeRepository, GhCreateReviewResponse,
     PagedPullRequests, PullRequestCommit, PullRequestDetails, PullRequestInfo,
