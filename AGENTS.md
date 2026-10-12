@@ -376,7 +376,7 @@ call has a timeout.
 GitHub `get_pull_request_diff` reuses a cached patch only on an exact (head SHA, resolved merge base) key, and only when
 every `diff --git` header and file status equals the live file metadata. Otherwise tuicr fetches live and requests a
 fill. `fetch_file_via_api` reads immutable revision blobs keyed by commit SHA. Cache keys use commit SHAs because
-timestamps do not guarantee freshness. If chd is absent, misses, errors, or times out, tuicr fetches live.
+timestamps do not guarantee freshness. If chd is absent, misses, errors, or times out, tuicr fetches live. With `TUICR_PROFILE`, `pr.diff_cache_lookup` (hit/miss), `pr.diff_cache_pair` (accepted/rejected) and `pr.diff_live_fetch` spans show cache outcomes.
 `TUICR_CHD_CACHE=0` disables the cache.
 
 Each daemon cycle chd prewarms diffs, blobs, and ETag-validated `pr`, `comments`, and `reviews` metadata for

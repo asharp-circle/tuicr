@@ -155,12 +155,22 @@ pub fn diff_with_cache<T>(
     fetch: impl FnOnce() -> Result<String>,
     pair: impl Fn(&str) -> Result<T>,
 ) -> Result<T> {
-    if let Some(cached) = lookup(pr)
-        && let Ok(parsed) = pair(&cached)
-    {
-        return Ok(parsed);
+    let cached = crate::profile::time_with(
+        "pr.diff_cache_lookup",
+        || lookup(pr),
+        |hit| if hit.is_some() { "hit" } else { "miss" }.to_string(),
+    );
+    if let Some(cached) = cached {
+        let paired = crate::profile::time_with(
+            "pr.diff_cache_pair",
+            || pair(&cached),
+            |r| if r.is_ok() { "accepted" } else { "rejected" }.to_string(),
+        );
+        if let Ok(parsed) = paired {
+            return Ok(parsed);
+        }
     }
-    let live = fetch()?;
+    let live = crate::profile::time("pr.diff_live_fetch", fetch)?;
     let parsed = pair(&live)?;
     store(pr);
     Ok(parsed)
