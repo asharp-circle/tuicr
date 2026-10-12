@@ -135,6 +135,7 @@ out to.
 | `EDITOR` | Editor used by `e` and `:edit`. The config `editor` setting wins; `vi` is the last resort |
 | `XDG_CONFIG_HOME`, `HOME`, `APPDATA` | Locate the config directory. See [CONFIG.md](CONFIG.md) |
 | `TUICR_PROFILE` | Write a startup/render profile log. See below |
+| `TUICR_CHD_CACHE` | Set to `0` to skip the optional chd PR diff cache (`chd pr-cache`). Cached diffs are used only on an exact head + merge-base match; chd absent or any error falls back to the live fetch |
 | `TUICR_PROFILE_FILE` | Path for that log, overriding the default location |
 | `AZURE_DEVOPS_EXT_PAT`, `AZURE_DEVOPS_PAT` | Azure DevOps PAT. Checked in that order; without one tuicr falls back to `az rest`. See [AZURE.md](AZURE.md) |
 | `GERRIT_URL` | Gerrit server root; also identifies Gerrit remotes on otherwise neutral hostnames. See [GERRIT.md](GERRIT.md) |

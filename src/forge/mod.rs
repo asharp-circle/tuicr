@@ -8,6 +8,7 @@
 pub mod azure;
 pub mod bitbucket;
 pub mod canonical;
+pub mod chd_cache;
 pub mod context;
 pub mod gerrit;
 pub mod gitea;

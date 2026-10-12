@@ -62,6 +62,7 @@ src/
 │   │                    # CreateReviewRequest, GhCreateReviewResponse, ForgeFileLinesRequest
 │   ├── pr_open.rs       # Async pr-open flow: build session from details + diff
 │   ├── selector.rs      # Review target selector state (Local | Pull Requests tabs)
+│   ├── chd_cache.rs     # Optional chd-owned PR diff cache client (`chd pr-cache`)
 │   ├── context.rs       # Remote context expansion via ForgeBackend::fetch_file_lines
 │   ├── local_git.rs     # Shared `git show <sha>:<path>` blob read for all backends
 │   ├── remote_comments.rs # RemoteReviewThread shape + visibility filter
@@ -479,3 +480,7 @@ You can reference comments by number (e.g., "Regarding comment #2...").
 4. **Preserve reviewer intent** - don't over-engineer solutions
 5. **Be concise** in your response
 6. **If unclear**, ask for clarification rather than guessing
+
+### chd PR cache
+
+`forge/chd_cache.rs` talks to `chd pr-cache get-diff|put-diff` (chd owns the files; tuicr never writes them). GitHub `get_pull_request_diff` reuses a cached patch only on an exact (head SHA, resolved merge base) key and only if it pairs with live file metadata; otherwise it fetches live and contributes the result. Timestamps never prove freshness. chd absent, miss, or error means live fetch; `TUICR_CHD_CACHE=0` disables. Not yet wired: mutable metadata (comments/reviews/checks ETag revalidation) and blob caching — chd exposes `meta`/`blob` stores in `chd/pr_cache.py` for that.

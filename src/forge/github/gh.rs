@@ -319,19 +319,26 @@ where
         // returns the single cumulative diff. Hard-won lesson; see the
         // duplicate-files-in-list bug.
         let metadata = self.pull_request_file_metadata(pr)?;
-        let patch = self.run_gh(
-            vec![
-                "pr".to_string(),
-                "diff".to_string(),
-                pr.number.to_string(),
-                "--repo".to_string(),
-                gh_repo_arg(&pr.repository),
-                "--color".to_string(),
-                "never".to_string(),
-            ],
-            &pr.repository.host,
-        )?;
-        pair_metadata_with_patch(metadata, patch.as_bytes())
+        crate::forge::chd_cache::diff_with_cache(
+            pr,
+            crate::forge::chd_cache::get_diff,
+            crate::forge::chd_cache::put_diff,
+            || {
+                self.run_gh(
+                    vec![
+                        "pr".to_string(),
+                        "diff".to_string(),
+                        pr.number.to_string(),
+                        "--repo".to_string(),
+                        gh_repo_arg(&pr.repository),
+                        "--color".to_string(),
+                        "never".to_string(),
+                    ],
+                    &pr.repository.host,
+                )
+            },
+            |patch| pair_metadata_with_patch(metadata.clone(), patch.as_bytes()),
+        )
     }
 
     fn local_checkout_path(&self) -> Option<PathBuf> {
