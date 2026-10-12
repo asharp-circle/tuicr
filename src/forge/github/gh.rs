@@ -1273,6 +1273,12 @@ where
         // and returns raw bytes, which we use here to keep parsing simple
         // and binary-safe (callers already gate binary files out).
         let path_str = request.path.to_string_lossy().replace('\\', "/");
+        // Revision content is immutable, so a chd hit needs no revalidation.
+        if let Some(hit) =
+            crate::forge::chd_cache::get_blob(&request.repository, request.sha(), &path_str)
+        {
+            return Ok(hit);
+        }
         let endpoint = format!(
             "repos/{}/{}/contents/{}?ref={}",
             request.repository.owner,
@@ -1290,7 +1296,9 @@ where
             args.push(request.repository.host.clone());
         }
         args.push(endpoint);
-        self.run_gh(args, &request.repository.host)
+        let content = self.run_gh(args, &request.repository.host)?;
+        crate::forge::chd_cache::put_blob(&request.repository, request.sha(), &path_str, &content);
+        Ok(content)
     }
 }
 
