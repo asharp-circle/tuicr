@@ -7,6 +7,8 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use toml::Value;
 
+mod crcl_icons;
+
 /// Parsed `ignore_whitespace` setting.
 ///
 /// Booleans keep the legacy global modes. `"auto"` selects per-extension
@@ -390,40 +392,12 @@ fn config_dir_from_parts(
 }
 
 pub fn load_config() -> Result<ConfigLoadOutcome> {
-    let path = config_path()?;
-    let mut outcome = load_config_from_path(&path)?;
-    merge_icons_file(&path.with_file_name(ICONS_FILE), &mut outcome);
-    Ok(outcome)
-}
-
-/// Optional sibling of `config.toml` holding only `[mode_icons]` / `[repo_icons]` / `[organization_icons]`,
-/// so generated icon tables stay out of the hand-written config.
-const ICONS_FILE: &str = "icons.toml";
-
-/// Fill icon tables from `icons.toml`; entries in `config.toml` win.
-fn merge_icons_file(path: &Path, outcome: &mut ConfigLoadOutcome) {
-    let Ok(contents) = fs::read_to_string(path) else {
-        return;
-    };
-    let table = match toml::from_str::<Value>(&contents) {
-        Ok(Value::Table(table)) => table,
-        _ => {
-            outcome
-                .warnings
-                .push(format!("Warning: Could not parse {ICONS_FILE}; ignoring"));
-            return;
-        }
-    };
-    let config = outcome.config.get_or_insert_with(AppConfig::default);
-    for (key, target) in [
-        ("mode_icons", &mut config.mode_icons),
-        ("repo_icons", &mut config.repo_icons),
-        ("organization_icons", &mut config.organization_icons),
-    ] {
-        for (name, icon) in read_string_map(&table, key, &mut outcome.warnings) {
-            target.entry(name).or_insert(icon);
-        }
+    let mut outcome = load_config_from_path(&config_path()?)?;
+    if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+        let config = outcome.config.get_or_insert_with(AppConfig::default);
+        crcl_icons::merge_crcl_icons(Path::new(&home), config);
     }
+    Ok(outcome)
 }
 
 /// Read a table of string values, skipping non-string entries with a warning.
@@ -2564,29 +2538,5 @@ scope_line = "no"
         assert_eq!(config.repo_icons.get("a-b").map(String::as_str), Some("X"));
         assert!(!config.repo_icons.contains_key("bad"));
         assert_eq!(outcome.warnings.len(), 1, "{:?}", outcome.warnings);
-    }
-
-    #[test]
-    fn should_merge_icons_file_without_overriding_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let icons = dir.path().join(ICONS_FILE);
-        fs::write(
-            &icons,
-            "[mode_icons]\nnormal = \"F\"\ninsert = \"I\"\n[repo_icons]\nr = \"R\"\n",
-        )
-        .unwrap();
-        let mut outcome = parse_config("[mode_icons]\nnormal = \"N\"\n");
-        merge_icons_file(&icons, &mut outcome);
-        let config = outcome.config.unwrap();
-        assert_eq!(config.mode_icons["normal"], "N");
-        assert_eq!(config.mode_icons["insert"], "I");
-        assert_eq!(config.repo_icons["r"], "R");
-    }
-
-    #[test]
-    fn should_ignore_missing_icons_file() {
-        let mut outcome = ConfigLoadOutcome::default();
-        merge_icons_file(Path::new("/nonexistent/icons.toml"), &mut outcome);
-        assert!(outcome.config.is_none() && outcome.warnings.is_empty());
     }
 }
