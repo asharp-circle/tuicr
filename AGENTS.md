@@ -366,6 +366,25 @@ These are non-obvious things the implementation chain hit. Worth preserving for 
 
 22. **`base_sha` means the merge base, not the base branch tip.** The old side of a three-dot PR patch lives at `merge-base(base, head)`. GitHub's `baseRefOid`, Azure's `lastMergeTargetCommit`, and Bitbucket's `destination.commit.hash` can instead report the base branch tip. `ForgeBackend::resolve_diff_base_sha` reconciles this once in `fetch_pr_data`, before fetching the patch, so context expansion, PR editor snapshots, and the commit-range fallback parent use the same revision. GitHub and Bitbucket resolve locally first and fall back to their compare/merge-base APIs; Azure resolves locally. GitLab and Gitea already report the merge base, and Gerrit uses the change's parent. Resolution is best-effort: `None` leaves the reported base unchanged. Same-head reloads must refresh `diff_source.pr.base_sha` too, including when a PR is retargeted.
 
+### chd PR cache
+
+`forge/chd_cache.rs` talks to `chd pr-cache`. chd owns the cache files; tuicr never writes them or supplies cache
+bytes. Tuicr only requests `fill-diff` and `fill-blob`, and chd fetches SHA-pinned content itself, keyed per
+credential. Fill requests run in the background, are deduplicated, capped at two in flight, and every chd call has a
+timeout.
+
+GitHub `get_pull_request_diff` reuses a cached patch only on an exact (head SHA, resolved merge base) key, and only when
+every `diff --git` header equals the live file metadata. Otherwise it fetches live and requests a fill.
+`fetch_file_via_api` reads immutable revision blobs keyed by commit SHA. Timestamps never prove freshness. If chd is
+absent, misses, errors, or times out, tuicr fetches live. `TUICR_CHD_CACHE=0` disables the cache.
+
+Each daemon cycle chd prewarms diffs, blobs, and ETag-validated `pr`, `comments`, and `reviews` metadata for
+review-requested PRs, then garbage-collects old files. Its `revalidate` command returns server-validated metadata
+(`If-None-Match`; a 304 proves the cached body current) and fails when freshness cannot be verified, including full
+or multi-page lists. tuicr does not call it: its comments, reviews, checks, and PR info use GraphQL, which has no
+validators, so they are always fetched live. That is correct but means those requests are never served from the cache
+and stay as slow as without chd.
+
 ### Keeping Docs Updated
 
 When adding user-facing features, update the relevant documentation:
@@ -480,7 +499,3 @@ You can reference comments by number (e.g., "Regarding comment #2...").
 4. **Preserve reviewer intent** - don't over-engineer solutions
 5. **Be concise** in your response
 6. **If unclear**, ask for clarification rather than guessing
-
-### chd PR cache
-
-`forge/chd_cache.rs` talks to `chd pr-cache` (chd owns the files; tuicr never writes them or supplies cache bytes; it only requests `fill-diff`/`fill-blob`, and chd fetches SHA-pinned content itself, keyed per credential). GitHub `get_pull_request_diff` reuses a cached patch only on an exact (head SHA, resolved merge base) key and only if it pairs with live file metadata; otherwise it fetches live and asks chd to fill the entry. `fetch_file_via_api` reads immutable revision blobs keyed by commit SHA. Timestamps never prove freshness. chd absent, miss, or error means live fetch; `TUICR_CHD_CACHE=0` disables. chd prewarms diffs, blobs, and ETag-validated `pr`/`comments`/`reviews` metadata for review-requested PRs each daemon cycle. `chd_cache::revalidate_meta` returns server-validated metadata (`If-None-Match`; a 304 proves the cached body current) and errors when freshness cannot be verified, including multi-page comments/reviews, which one ETag cannot cover. tuicr's comments, reviews and PR info are GraphQL, which has no validators, so they are always fetched live and are not served from the cache; the metadata API is available but not yet consumed by the UI.

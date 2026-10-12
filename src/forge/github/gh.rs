@@ -324,7 +324,7 @@ where
             |pr| {
                 crate::forge::chd_cache::get_diff(pr).filter(|p| cached_headers_match(&metadata, p))
             },
-            crate::forge::chd_cache::put_diff,
+            crate::forge::chd_cache::request_diff_fill,
             || {
                 self.run_gh(
                     vec![
@@ -1299,7 +1299,7 @@ where
         }
         args.push(endpoint);
         let content = self.run_gh(args, &request.repository.host)?;
-        crate::forge::chd_cache::put_blob(&request.repository, request.sha(), &path_str, &content);
+        crate::forge::chd_cache::request_blob_fill(&request.repository, request.sha(), &path_str);
         Ok(content)
     }
 }
