@@ -321,7 +321,9 @@ where
         let metadata = self.pull_request_file_metadata(pr)?;
         crate::forge::chd_cache::diff_with_cache(
             pr,
-            crate::forge::chd_cache::get_diff,
+            |pr| {
+                crate::forge::chd_cache::get_diff(pr).filter(|p| cached_headers_match(&metadata, p))
+            },
             crate::forge::chd_cache::put_diff,
             || {
                 self.run_gh(
@@ -1300,6 +1302,24 @@ where
         crate::forge::chd_cache::put_blob(&request.repository, request.sha(), &path_str, &content);
         Ok(content)
     }
+}
+
+/// Cheap identity check for a cached patch against live file metadata: every
+/// block's `diff --git` header must mention its record's path. A force-push
+/// that swaps files but keeps the count then falls back to the live fetch.
+/// Substring match only; paths are never parsed from patch text.
+fn cached_headers_match(metadata: &[FileMetadata], patch: &str) -> bool {
+    let headers: Vec<&str> = patch
+        .lines()
+        .filter(|line| line.starts_with("diff --git "))
+        .collect();
+    headers.len() == metadata.len()
+        && headers.iter().zip(metadata).all(|(header, meta)| {
+            meta.new_path
+                .as_ref()
+                .or(meta.old_path.as_ref())
+                .is_some_and(|path| header.contains(path.to_string_lossy().as_ref()))
+        })
 }
 
 pub fn parse_pull_request_target(input: &str) -> Result<PullRequestTarget> {
@@ -2750,6 +2770,22 @@ Match host github-work
             Some(Path::new("src/lib.rs"))
         );
         assert_eq!(patches[0].patch, PR_PATCH.trim_start());
+    }
+
+    #[test]
+    fn cached_patch_with_swapped_files_is_rejected() {
+        let meta = |p: &str| FileMetadata {
+            old_path: Some(PathBuf::from(p)),
+            new_path: Some(PathBuf::from(p)),
+            status: crate::model::FileStatus::Modified,
+        };
+        let patch = "diff --git a/old.rs b/old.rs\n@@ -1 +1 @@\n-a\n+b\n";
+        assert!(cached_headers_match(&[meta("old.rs")], patch));
+        assert!(!cached_headers_match(&[meta("new.rs")], patch));
+        assert!(!cached_headers_match(
+            &[meta("old.rs"), meta("x.rs")],
+            patch
+        ));
     }
 
     #[test]
