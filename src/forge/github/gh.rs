@@ -2868,13 +2868,29 @@ Match host github-work
         let details = backend
             .get_pull_request(parse_pull_request_target("125").unwrap())
             .unwrap();
-        let (out, patches, _commits, _meta) = backend
+        let (out, patches, commits, meta) = backend
             .fetch_diff_commits_metadata(details.clone())
             .unwrap();
-        assert_eq!(out.head_sha, details.head_sha);
+
+        let mut serial = details.clone();
+        if let Some(base) = backend.resolve_diff_base_sha(&serial) {
+            serial.base_sha = base;
+        }
+        assert_eq!(out.head_sha, serial.head_sha);
+        assert_eq!(out.base_sha, serial.base_sha);
+        assert_eq!(patches, backend.get_pull_request_diff(&serial).unwrap());
         assert_eq!(
-            patches.len(),
-            backend.get_pull_request_diff(&out).unwrap().len()
+            commits,
+            backend
+                .list_pull_request_commits(&serial)
+                .unwrap_or_default()
+        );
+        assert_eq!(
+            meta.viewer_login,
+            backend
+                .list_pull_request_review_metadata(&serial)
+                .unwrap_or_default()
+                .viewer_login
         );
     }
 
