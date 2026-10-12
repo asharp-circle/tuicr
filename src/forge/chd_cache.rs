@@ -249,10 +249,10 @@ mod tests {
 
     #[test]
     fn missing_chd_binary_yields_none() {
-        // PATH without chd: spawn fails, caller falls back to live.
         assert!(
-            run_chd(
-                &["--definitely-not-a-command".into()],
+            run_program(
+                "tuicr-definitely-missing-binary",
+                &[],
                 Duration::from_millis(200)
             )
             .is_none()
