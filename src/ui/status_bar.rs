@@ -96,7 +96,7 @@ fn powerline_header_spans(
         theme.status_bar_bg,
     );
     let first = chunks.first().cloned().unwrap_or_default();
-    let mut left = vec![pl_seg(format!(" tuicr \u{00b7} {first} "), primary, theme)];
+    let mut left = vec![pl_seg(format!(" {first} "), primary, theme)];
     if let Some(file) = file_label {
         left.push(pl_sep(PL_RIGHT, primary, secondary));
         left.push(pl_seg(format!(" {file} "), secondary, theme));
@@ -125,7 +125,7 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let in_pr_mode = matches!(app.diff_source, DiffSource::PullRequest(_));
 
     let brand = Span::styled(
-        " tuicr ",
+        " ",
         Style::default()
             .fg(theme.fg_primary)
             .add_modifier(Modifier::BOLD),
@@ -1133,10 +1133,9 @@ mod header_snapshot_tests {
         let app = build_pr_app(pr_source(false, false));
         // when
         let buffer = draw_header(&app);
-        // then — brand on the left, then bullet-separated PR Mode tag,
-        // slug#number, and title in the right cluster.
+        // Keep the PR Mode tag and metadata without the application-name prefix.
         let line = row_text(&buffer, 0);
-        assert!(line.contains("tuicr"), "got: {line:?}");
+        assert!(!line.trim_start().starts_with("tuicr"), "got: {line:?}");
         assert!(line.contains("PR Mode"), "got: {line:?}");
         assert!(line.contains("agavra/tuicr#125"), "got: {line:?}");
         assert!(line.contains("Add forge-backed PR review"), "got: {line:?}");
@@ -1491,6 +1490,7 @@ mod header_snapshot_tests {
         let line = row_text(&buffer, 0);
         assert!(line.contains("src/main.rs"), "got: {line:?}");
         assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.trim_start().starts_with("PR Mode"), "got: {line:?}");
         let sep = (0..140u16)
             .map(|x| &buffer[(x, 0)])
             .find(|c| c.symbol() == "\u{e0b0}")
