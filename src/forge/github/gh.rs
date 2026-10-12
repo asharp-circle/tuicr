@@ -347,6 +347,30 @@ where
         super::pr_info::parse_pull_request_info(&output, &repository)
     }
 
+    fn fetch_pr_data_overlapped(
+        &self,
+        target: &PullRequestTarget,
+    ) -> Option<Result<crate::forge::pr_open::PrFetchData>> {
+        if !crate::forge::chd_cache::is_enabled() {
+            return None;
+        }
+        let repository = self.resolve_repository(target).ok()?;
+        Some(overlapped_open(
+            || {
+                let (head_sha, base_sha) =
+                    crate::forge::chd_cache::validated_pr_identity(&repository, target.number)?;
+                Some(identity_seed(
+                    repository.clone(),
+                    target.number,
+                    head_sha,
+                    base_sha,
+                ))
+            },
+            || self.get_pull_request_info(target.clone()),
+            |details| self.fetch_diff_commits_metadata(details),
+        ))
+    }
+
     fn fetch_diff_commits_metadata(
         &self,
         mut details: PullRequestDetails,
@@ -1349,6 +1373,90 @@ where
     }
 }
 
+type DiffBundle = (
+    PullRequestDetails,
+    Vec<FilePatch>,
+    Vec<PullRequestCommit>,
+    crate::forge::traits::PullRequestReviewMetadata,
+);
+
+/// Details carrying only validated identity; every other field is empty and
+/// is always replaced by the live PR info.
+fn identity_seed(
+    repository: ForgeRepository,
+    number: u64,
+    head_sha: String,
+    base_sha: String,
+) -> PullRequestDetails {
+    PullRequestDetails {
+        repository,
+        number,
+        title: String::new(),
+        url: String::new(),
+        state: String::new(),
+        is_draft: false,
+        author: None,
+        head_ref_name: String::new(),
+        base_ref_name: String::new(),
+        head_sha,
+        base_sha,
+        body: String::new(),
+        updated_at: None,
+        closed: false,
+        merged_at: None,
+        diff_start_sha: None,
+    }
+}
+
+/// Run the live PR info fetch while the validated identity is obtained and
+/// the diff/commit/metadata fetches are seeded from it. If identity is
+/// unavailable, the seeded fetches fail, or the info disagrees, the bundle is
+/// refetched serially against the info's identity.
+fn overlapped_open(
+    identity: impl FnOnce() -> Option<PullRequestDetails>,
+    info: impl FnOnce() -> Result<crate::forge::traits::PullRequestInfo> + Send,
+    fetch: impl Fn(PullRequestDetails) -> Result<DiffBundle> + Sync,
+) -> Result<crate::forge::pr_open::PrFetchData> {
+    let (info, seed, early) = std::thread::scope(|scope| {
+        let info = scope.spawn(|| crate::profile::time("pr.fetch_info", info));
+        let seed = identity();
+        let early = seed.as_ref().map(|seed| {
+            crate::profile::time("pr.fetch_diff_commits_metadata_early", || {
+                fetch(seed.clone())
+            })
+        });
+        (info.join(), seed, early)
+    });
+    let info = info.map_err(|_| TuicrError::Forge("PR info worker panicked".into()))??;
+    reconcile_overlap(seed.as_ref(), info, early, fetch)
+}
+
+/// Combine overlapped fetches with the live PR info. The early bundle is
+/// used only when the info reports the identical head and base the fetches
+/// were seeded with; otherwise (or if they failed) `serial` refetches against
+/// the info's identity. Info fields always come from the live info, and only
+/// the refined diff base is taken from the bundle.
+fn reconcile_overlap(
+    seed: Option<&PullRequestDetails>,
+    mut info: crate::forge::traits::PullRequestInfo,
+    early: Option<Result<DiffBundle>>,
+    serial: impl FnOnce(PullRequestDetails) -> Result<DiffBundle>,
+) -> Result<crate::forge::pr_open::PrFetchData> {
+    let same = seed.is_some_and(|seed| {
+        info.details.head_sha == seed.head_sha && info.details.base_sha == seed.base_sha
+    });
+    let bundle = match early {
+        Some(Ok(bundle)) if same => bundle,
+        _ => crate::profile::time("pr.fetch_diff_commits_metadata", || {
+            serial(info.details.clone())
+        })?,
+    };
+    let (refined, patches, commits, review_metadata) = bundle;
+    info.details.base_sha = refined.base_sha;
+    let details = info.details.clone();
+    Ok((details, patches, commits, review_metadata, info))
+}
+
 /// Identity check for a cached patch against live file metadata. Each block's
 /// `diff --git` header must equal the one built from its record's paths, and its
 /// extended header lines must agree with the record's status (new/deleted/rename/
@@ -1780,6 +1888,131 @@ index 1111111..2222222 100644
 
 #[cfg(test)]
 mod tests {
+    fn seed_details(head: &str, base: &str) -> PullRequestDetails {
+        PullRequestDetails {
+            repository: ForgeRepository::github("github.com", "o", "r"),
+            number: 1,
+            title: String::new(),
+            url: String::new(),
+            state: String::new(),
+            is_draft: false,
+            author: None,
+            head_ref_name: String::new(),
+            base_ref_name: String::new(),
+            head_sha: head.into(),
+            base_sha: base.into(),
+            body: String::new(),
+            updated_at: None,
+            closed: false,
+            merged_at: None,
+            diff_start_sha: None,
+        }
+    }
+
+    fn bundle(base: &str, tag: &str) -> DiffBundle {
+        let mut d = seed_details("h", base);
+        d.title = tag.into();
+        (d, Vec::new(), Vec::new(), Default::default())
+    }
+
+    fn info(head: &str, base: &str) -> crate::forge::traits::PullRequestInfo {
+        crate::forge::traits::PullRequestInfo::from_details(seed_details(head, base))
+    }
+
+    #[test]
+    fn overlap_kept_when_info_matches_seed_and_refines_base_only() {
+        let seed = seed_details("h", "tip");
+        let out = reconcile_overlap(
+            Some(&seed),
+            info("h", "tip"),
+            Some(Ok(bundle("mb", "early"))),
+            |_| panic!("no serial refetch on match"),
+        )
+        .unwrap();
+        assert_eq!(out.0.base_sha, "mb");
+        assert_eq!(out.0.title, ""); // live info fields, not the seed's
+    }
+
+    #[test]
+    fn overlap_discarded_on_force_push_or_retarget() {
+        let seed = seed_details("h", "tip");
+        for (head, base) in [("h2", "tip"), ("h", "tip2")] {
+            let out = reconcile_overlap(
+                Some(&seed),
+                info(head, base),
+                Some(Ok(bundle("old", "early"))),
+                |d| {
+                    assert_eq!((d.head_sha.as_str(), d.base_sha.as_str()), (head, base));
+                    Ok(bundle("fresh", "serial"))
+                },
+            )
+            .unwrap();
+            assert_eq!(out.0.base_sha, "fresh");
+        }
+    }
+
+    #[test]
+    fn overlapped_open_without_identity_fetches_once_serially() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let out = overlapped_open(
+            || None,
+            || Ok(info("h", "tip")),
+            |_| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(bundle("mb", "serial"))
+            },
+        )
+        .unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(out.0.base_sha, "mb");
+    }
+
+    #[test]
+    fn overlapped_open_uses_early_bundle_only_on_identity_match() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let fetch = |_| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(bundle("mb", "x"))
+        };
+        overlapped_open(
+            || Some(seed_details("h", "tip")),
+            || Ok(info("h", "tip")),
+            fetch,
+        )
+        .unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        overlapped_open(
+            || Some(seed_details("h", "tip")),
+            || Ok(info("h2", "tip")),
+            fetch,
+        )
+        .unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn overlapped_open_propagates_info_error() {
+        let err = overlapped_open(
+            || Some(seed_details("h", "tip")),
+            || Err(TuicrError::Forge("boom".into())),
+            |_| Ok(bundle("mb", "x")),
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn overlap_failure_falls_back_to_serial() {
+        let seed = seed_details("h", "tip");
+        let out = reconcile_overlap(
+            Some(&seed),
+            info("h", "tip"),
+            Some(Err(TuicrError::Forge("x".into()))),
+            |_| Ok(bundle("fresh", "serial")),
+        )
+        .unwrap();
+        assert_eq!(out.0.base_sha, "fresh");
+    }
+
     /// `RefCell`-shaped, but `Sync`, so fakes satisfy `GhCommandRunner`.
     #[derive(Default)]
     pub(crate) struct TestCell<T>(std::sync::Mutex<T>);

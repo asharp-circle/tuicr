@@ -19,6 +19,10 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 const FILL_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_FILLS_IN_FLIGHT: usize = 2;
 
+pub(crate) fn is_enabled() -> bool {
+    enabled()
+}
+
 fn enabled() -> bool {
     // Unit tests must never reach the developer's real chd cache.
     if cfg!(test) {
@@ -99,6 +103,41 @@ fn key_args(op: &str, pr: &PullRequestDetails) -> Vec<String> {
         pr.head_sha.clone(),
         pr.base_sha.clone(),
     ]
+}
+
+/// Head and base-tip SHAs of the PR, ETag-validated by chd against GitHub
+/// (`If-None-Match`; a 304 proves the cached body current). `None` when chd is
+/// absent or validation fails, so a cached body is never presented as fresh.
+pub fn validated_pr_identity(repo: &ForgeRepository, number: u64) -> Option<(String, String)> {
+    if !enabled() {
+        return None;
+    }
+    let args: Vec<String> = [
+        "pr-cache",
+        "revalidate",
+        &repo.host,
+        &repo.owner,
+        &repo.name,
+        &number.to_string(),
+        "pr",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let out = crate::profile::time("pr.chd_revalidate_pr", || run_chd(&args, READ_TIMEOUT))?;
+    parse_pr_identity(&out)
+}
+
+fn parse_pr_identity(json: &str) -> Option<(String, String)> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let sha = |side: &str| {
+        v.get(side)?
+            .get("sha")?
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    Some((sha("head")?, sha("base")?))
 }
 
 /// Cached patch for exactly this head + merge base, if chd has one.
@@ -242,6 +281,17 @@ mod tests {
         .unwrap();
         assert_eq!(out, "live");
         assert!(stored.get());
+    }
+
+    #[test]
+    fn parses_pr_identity() {
+        let j = r#"{"head":{"sha":"h1"},"base":{"sha":"b1"}}"#;
+        assert_eq!(parse_pr_identity(j), Some(("h1".into(), "b1".into())));
+        assert_eq!(
+            parse_pr_identity(r#"{"head":{"sha":""},"base":{"sha":"b"}}"#),
+            None
+        );
+        assert_eq!(parse_pr_identity("nope"), None);
     }
 
     #[test]

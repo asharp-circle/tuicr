@@ -654,6 +654,16 @@ pub trait ForgeBackend {
     /// list scopes the inline commit selector so users can narrow a PR's
     /// cumulative diff down to a contiguous subrange.
     fn list_pull_request_commits(&self, pr: &PullRequestDetails) -> Result<Vec<PullRequestCommit>>;
+    /// Optional faster open path: overlap the diff/commit fetches with the PR
+    /// info fetch using server-validated head/base identity. `None` means the
+    /// backend has no such path and the caller must use the serial path.
+    fn fetch_pr_data_overlapped(
+        &self,
+        _target: &PullRequestTarget,
+    ) -> Option<Result<crate::forge::pr_open::PrFetchData>> {
+        None
+    }
+
     /// Fetch everything `fetch_pr_data` needs after the PR details: the merge
     /// base refinement and diff, the commit list, and review metadata.
     ///

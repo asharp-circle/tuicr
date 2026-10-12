@@ -379,10 +379,12 @@ fill. `fetch_file_via_api` reads immutable revision blobs keyed by commit SHA. C
 timestamps do not guarantee freshness. If chd is absent, misses, errors, or times out, tuicr fetches live. With `TUICR_PROFILE`, `pr.diff_cache_lookup` (hit/miss), `pr.diff_cache_pair` (accepted/rejected) and `pr.diff_live_fetch` spans show cache outcomes.
 `TUICR_CHD_CACHE=0` disables the cache.
 
+PR open overlap: `ForgeBackend::fetch_pr_data_overlapped` (GitHub only) asks chd to ETag-revalidate REST `pulls/N` (`chd pr-cache revalidate … pr`; 304 proves the cached body current, failure means no overlap). The validated head and base tip seed the diff/commits/review-metadata fetches, which run in parallel with the live GraphQL PR info. They are kept only if the info reports the same head and base; otherwise `reconcile_overlap` refetches serially, so a force push or retarget never pairs data with another revision. `pr.chd_revalidate_pr` and `pr.fetch_diff_commits_metadata_early` profile spans show it. Measured on PR 185: `app_init` ~3.5–5.8s with `TUICR_CHD_CACHE=0` vs ~1.9–2.2s with it. Still always live: GraphQL PR info/checks/threads, review metadata, commits, and the file list (multi-page collections have no single ETag).
+
 Each daemon cycle chd prewarms diffs, blobs, and ETag-validated `pr`, `comments`, and `reviews` metadata for
 review-requested PRs, then garbage-collects old files. Its `revalidate` command returns server-validated metadata using
 `If-None-Match`, where HTTP 304 proves the cached body current. It fails when freshness cannot be verified, including
-on full or multi-page lists. tuicr does not call it. Its comments, reviews, checks, and PR info use GraphQL, which has
+on full or multi-page lists. tuicr calls it only for `pr` identity (see PR open overlap below). Its comments, reviews, checks, and PR info use GraphQL, which has
 no validators, so tuicr always fetches them live. Consequently, those requests bypass the cache and incur normal
 network latency.
 

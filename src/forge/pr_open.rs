@@ -82,6 +82,9 @@ pub fn open_pull_request(
 /// only, we still return the diff so PR review proceeds without the
 /// inline selector. The first two calls remain required.
 pub fn fetch_pr_data(backend: &dyn ForgeBackend, target: PullRequestTarget) -> Result<PrFetchData> {
+    if let Some(fetched) = backend.fetch_pr_data_overlapped(&target) {
+        return fetched;
+    }
     let mut pr_info =
         crate::profile::time("pr.fetch_info", || backend.get_pull_request_info(target))?;
     // `base_sha` is pinned to the commit the displayed patch is taken from
