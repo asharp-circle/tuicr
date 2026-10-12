@@ -12,6 +12,10 @@ use crate::process::{run_command_output, run_command_output_with_stdin};
 const DISABLE_ENV: &str = "TUICR_CHD_CACHE";
 
 fn enabled() -> bool {
+    // Unit tests must never reach the developer's real chd cache.
+    if cfg!(test) {
+        return false;
+    }
     std::env::var(DISABLE_ENV).map(|v| v != "0").unwrap_or(true)
 }
 
