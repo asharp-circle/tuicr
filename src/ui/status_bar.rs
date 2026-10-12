@@ -200,7 +200,7 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let build_chunks = |title_limit: Option<usize>| -> Vec<String> {
         let mut chunks = Vec::new();
         if in_pr_mode {
-            chunks.push("PR Mode".to_string());
+            chunks.push("".to_string());
         } else {
             let vcs_type = &app.vcs_info.vcs_type;
             let branch = app.vcs_info.branch_name.as_deref().unwrap_or("detached");
@@ -1150,19 +1150,19 @@ mod header_snapshot_tests {
         let app = build_pr_app(pr_source(false, false));
         // when
         let buffer = draw_header(&app);
-        // Keep the PR Mode tag and metadata without the application-name prefix.
+        // Keep the  tag and metadata without the application-name prefix.
         let line = row_text(&buffer, 0);
         assert!(!line.trim_start().starts_with("tuicr"), "got: {line:?}");
-        assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.contains(""), "got: {line:?}");
         assert!(line.contains("agavra/tuicr#125"), "got: {line:?}");
         assert!(line.contains("Add forge-backed PR review"), "got: {line:?}");
     }
 
-    // Read-only badges are no longer shown in the header: the `PR Mode`
+    // Read-only badges are no longer shown in the header: the ``
     // tag itself signals the user is on a forge-managed review; whether
     // the PR is open/closed/merged is left to the submit flow to surface
     // (the submit action errors with a clear message). These tests now
-    // assert the simpler invariant: closed/merged still show `PR Mode`
+    // assert the simpler invariant: closed/merged still show ``
     // but don't add a `read only` chip.
 
     #[test]
@@ -1173,7 +1173,7 @@ mod header_snapshot_tests {
         let buffer = draw_header(&app);
         // then
         let line = row_text(&buffer, 0);
-        assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.contains(""), "got: {line:?}");
         assert!(!line.contains("read only"), "got: {line:?}");
     }
 
@@ -1188,7 +1188,7 @@ mod header_snapshot_tests {
         // then: the diff title row is gone; its file label + stats fold into
         // this header line (no diff files -> "Overview" and +0/-0).
         let line = row_text(&buffer, 0);
-        assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.contains(""), "got: {line:?}");
         assert!(line.contains("Overview"), "got: {line:?}");
         assert!(line.contains("+0") && line.contains("-0"), "got: {line:?}");
     }
@@ -1212,7 +1212,7 @@ mod header_snapshot_tests {
         let buffer = draw_header(&app);
         let line = row_text(&buffer, 0);
 
-        assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.contains(""), "got: {line:?}");
         assert!(line.contains("agavra/tuicr#125"), "got: {line:?}");
         assert!(!line.contains("gh:agavra/tuicr/pr/125"), "got: {line:?}");
     }
@@ -1233,7 +1233,7 @@ mod header_snapshot_tests {
         let line = row_text(&buffer, 0);
 
         assert!(line.contains("TriggersController.java"), "got: {line:?}");
-        assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.contains(""), "got: {line:?}");
         assert!(!line.contains("gh:agavra/tuicr/pr/125"), "got: {line:?}");
     }
 
@@ -1264,7 +1264,7 @@ mod header_snapshot_tests {
         let line = row_text(&buffer, 0);
 
         assert!(line.contains("src/main.rs"), "got: {line:?}");
-        assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.contains(""), "got: {line:?}");
         assert!(line.contains("agavra/tuicr#125"), "got: {line:?}");
         assert!(line.contains("Add forge-backed PR review"), "got: {line:?}");
     }
@@ -1290,7 +1290,7 @@ mod header_snapshot_tests {
         let buffer = draw_header(&app);
         // then
         let line = row_text(&buffer, 0);
-        assert!(line.contains("PR Mode"), "got: {line:?}");
+        assert!(line.contains(""), "got: {line:?}");
         assert!(!line.contains("read only"), "got: {line:?}");
     }
 
@@ -1506,8 +1506,8 @@ mod header_snapshot_tests {
         let buffer = draw_header_with_width(&app, 140);
         let line = row_text(&buffer, 0);
         assert!(line.contains("src/main.rs"), "got: {line:?}");
-        assert!(line.contains("PR Mode"), "got: {line:?}");
-        assert!(line.trim_start().starts_with("PR Mode"), "got: {line:?}");
+        assert!(line.contains(""), "got: {line:?}");
+        assert!(line.trim_start().starts_with(""), "got: {line:?}");
         let sep = (0..140u16)
             .map(|x| &buffer[(x, 0)])
             .find(|c| c.symbol() == "\u{e0b0}")
