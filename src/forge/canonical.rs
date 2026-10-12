@@ -76,33 +76,34 @@ fn fetch_parent(origin: &ForgeRepository, runner: &dyn GhCommandRunner) -> Optio
 mod tests {
     use super::*;
     use crate::forge::github::gh::{GhCommandError, GhCommandResult};
-    use std::cell::RefCell;
+    use std::sync::Mutex;
 
     #[derive(Default)]
     struct FakeRunner {
-        response: RefCell<Option<GhCommandResult<String>>>,
-        calls: RefCell<Vec<Vec<String>>>,
+        response: Mutex<Option<GhCommandResult<String>>>,
+        calls: Mutex<Vec<Vec<String>>>,
     }
 
     impl FakeRunner {
         fn with_ok(body: &str) -> Self {
             let me = Self::default();
-            *me.response.borrow_mut() = Some(Ok(body.to_string()));
+            *me.response.lock().unwrap() = Some(Ok(body.to_string()));
             me
         }
 
         fn with_err(err: GhCommandError) -> Self {
             let me = Self::default();
-            *me.response.borrow_mut() = Some(Err(err));
+            *me.response.lock().unwrap() = Some(Err(err));
             me
         }
     }
 
     impl GhCommandRunner for FakeRunner {
         fn run(&self, args: &[String]) -> GhCommandResult<String> {
-            self.calls.borrow_mut().push(args.to_vec());
+            self.calls.lock().unwrap().push(args.to_vec());
             self.response
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .take()
                 .unwrap_or(Err(GhCommandError::Failed {
                     status: Some(1),
@@ -129,7 +130,7 @@ mod tests {
         // then
         assert_eq!(resolved, upstream());
         assert!(
-            runner.calls.borrow().is_empty(),
+            runner.calls.lock().unwrap().is_empty(),
             "override must short-circuit the gh api call"
         );
     }
@@ -157,7 +158,7 @@ mod tests {
             ForgeRepository::github("ghe.internal", "slatedb", "slatedb")
         );
         // and — the --hostname flag was passed to gh
-        let calls = runner.calls.borrow();
+        let calls = runner.calls.lock().unwrap();
         let last = calls.last().expect("expected a gh call");
         assert!(last.iter().any(|a| a == "--hostname"));
         assert!(last.iter().any(|a| a == "ghe.internal"));

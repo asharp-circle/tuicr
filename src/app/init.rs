@@ -915,33 +915,39 @@ impl App {
             .as_deref()
             .and_then(crate::forge::detect_forge_repository);
 
-        // Canonical resolution (fork parent lookup) only works for GitHub.
-        let canonical_repo = detected_repo.as_ref().and_then(|origin| {
-            if origin.kind == ForgeKind::GitHub {
-                use crate::forge::canonical::resolve_canonical_repository;
-                use crate::forge::github::gh::SystemGhRunner;
-                Some(resolve_canonical_repository(
-                    origin,
-                    repo_url_override.as_ref(),
-                    &SystemGhRunner,
-                ))
-            } else {
-                None
-            }
-        });
-        let target_repo = parsed
+        // Canonical resolution (fork parent lookup) only works for GitHub. It
+        // costs a `gh api` round trip, so run it only when nothing more
+        // specific (an explicit repo or `--repo-url`) already names the target.
+        let target_repo = match parsed
             .repository
             .clone()
             .or_else(|| repo_url_override.clone())
-            .or_else(|| canonical_repo.clone())
-            .or_else(|| detected_repo.clone())
-            .ok_or_else(|| {
-                TuicrError::Forge(
-                    "tuicr pr <number> requires a local forge remote. \
-                     Use owner/repo#N or a full PR URL outside a checkout."
-                        .to_string(),
-                )
-            })?;
+        {
+            Some(repo) => repo,
+            None => detected_repo
+                .as_ref()
+                .and_then(|origin| {
+                    if origin.kind == ForgeKind::GitHub {
+                        use crate::forge::canonical::resolve_canonical_repository;
+                        use crate::forge::github::gh::SystemGhRunner;
+                        Some(resolve_canonical_repository(
+                            origin,
+                            repo_url_override.as_ref(),
+                            &SystemGhRunner,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| detected_repo.clone())
+                .ok_or_else(|| {
+                    TuicrError::Forge(
+                        "tuicr pr <number> requires a local forge remote. \
+                         Use owner/repo#N or a full PR URL outside a checkout."
+                            .to_string(),
+                    )
+                })?,
+        };
 
         // Use the local checkout for `.tuicrignore` only when it matches the
         // PR's target repository — using a foreign repo's checkout would

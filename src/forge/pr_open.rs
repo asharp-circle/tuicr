@@ -82,23 +82,16 @@ pub fn open_pull_request(
 /// only, we still return the diff so PR review proceeds without the
 /// inline selector. The first two calls remain required.
 pub fn fetch_pr_data(backend: &dyn ForgeBackend, target: PullRequestTarget) -> Result<PrFetchData> {
-    let mut pr_info = backend.get_pull_request_info(target)?;
-    // Pin `base_sha` to the commit the displayed patch is actually taken
-    // from before anything downstream reads it. Everything that resolves the
-    // old side of the diff — editor snapshots, context expansion, the
-    // commit-range fallback parent — derives from this field, so refining it
-    // once here keeps those consistent by construction.
-    if let Some(base_sha) = backend.resolve_diff_base_sha(&pr_info.details) {
-        pr_info.details.base_sha = base_sha;
-    }
-    let details = pr_info.details.clone();
-    let patches = backend.get_pull_request_diff(&details)?;
-    let commits = backend
-        .list_pull_request_commits(&details)
-        .unwrap_or_default();
-    let review_metadata = backend
-        .list_pull_request_review_metadata(&details)
-        .unwrap_or_default();
+    let mut pr_info =
+        crate::profile::time("pr.fetch_info", || backend.get_pull_request_info(target))?;
+    // `base_sha` is pinned to the commit the displayed patch is taken from
+    // before anything downstream reads it, so editor snapshots, context
+    // expansion and the commit-range fallback parent stay consistent.
+    let (details, patches, commits, review_metadata) =
+        crate::profile::time("pr.fetch_diff_commits_metadata", || {
+            backend.fetch_diff_commits_metadata(pr_info.details.clone())
+        })?;
+    pr_info.details = details.clone();
     Ok((details, patches, commits, review_metadata, pr_info))
 }
 

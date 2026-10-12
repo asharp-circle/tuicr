@@ -64,7 +64,7 @@ pub enum GhCommandError {
 
 pub type GhCommandResult<T> = std::result::Result<T, GhCommandError>;
 
-pub trait GhCommandRunner {
+pub trait GhCommandRunner: Sync {
     fn run(&self, args: &[String]) -> GhCommandResult<String>;
 
     /// Variant for `gh` invocations that take their payload on stdin (e.g.
@@ -212,6 +212,43 @@ where
             .map_err(|err| map_gh_error(err, host))
     }
 
+    /// Cumulative diff for `pr`, paired with already-fetched file metadata.
+    fn diff_with_metadata(
+        &self,
+        pr: &PullRequestDetails,
+        metadata: Vec<FileMetadata>,
+    ) -> Result<Vec<FilePatch>> {
+        // We want the *cumulative* diff between base and head for the PR.
+        // `gh pr diff --patch` returns mbox-style `git format-patch` output
+        // — one patch per commit — so a 7-commit PR yields 7 separate
+        // `diff --git` blocks per file, which our parser dutifully turns
+        // into duplicate `DiffFile`s. Plain `gh pr diff` (no `--patch`)
+        // returns the single cumulative diff. Hard-won lesson; see the
+        // duplicate-files-in-list bug.
+        crate::forge::chd_cache::diff_with_cache(
+            pr,
+            |pr| {
+                crate::forge::chd_cache::get_diff(pr).filter(|p| cached_headers_match(&metadata, p))
+            },
+            crate::forge::chd_cache::request_diff_fill,
+            || {
+                self.run_gh(
+                    vec![
+                        "pr".to_string(),
+                        "diff".to_string(),
+                        pr.number.to_string(),
+                        "--repo".to_string(),
+                        gh_repo_arg(&pr.repository),
+                        "--color".to_string(),
+                        "never".to_string(),
+                    ],
+                    &pr.repository.host,
+                )
+            },
+            |patch| pair_metadata_with_patch(metadata.clone(), patch.as_bytes()),
+        )
+    }
+
     fn pull_request_file_metadata(&self, pr: &PullRequestDetails) -> Result<Vec<FileMetadata>> {
         let mut metadata = Vec::new();
         for page in 1..=30 {
@@ -310,37 +347,45 @@ where
         super::pr_info::parse_pull_request_info(&output, &repository)
     }
 
+    fn fetch_diff_commits_metadata(
+        &self,
+        mut details: PullRequestDetails,
+    ) -> Result<(
+        PullRequestDetails,
+        Vec<FilePatch>,
+        Vec<PullRequestCommit>,
+        crate::forge::traits::PullRequestReviewMetadata,
+    )> {
+        // Commits, review metadata and the file list depend only on the PR
+        // number, so they overlap with the merge-base lookup. The diff itself
+        // still waits for the refined base: its cache identity is (head, base).
+        let original = details.clone();
+        let (patches, commits, review_metadata) = std::thread::scope(|scope| {
+            let commits = scope.spawn(|| self.list_pull_request_commits(&original));
+            let metadata = scope.spawn(|| self.list_pull_request_review_metadata(&original));
+            let files = scope.spawn(|| self.pull_request_file_metadata(&original));
+            if let Some(base_sha) = self.resolve_diff_base_sha(&details) {
+                details.base_sha = base_sha;
+            }
+            let patches = files
+                .join()
+                .map_err(|_| TuicrError::Forge("file metadata worker panicked".into()))
+                .and_then(|files| files)
+                .and_then(|files| self.diff_with_metadata(&details, files));
+            let commits = commits.join().ok().and_then(|r| r.ok()).unwrap_or_default();
+            let metadata = metadata
+                .join()
+                .ok()
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            (patches, commits, metadata)
+        });
+        Ok((details, patches?, commits, review_metadata))
+    }
+
     fn get_pull_request_diff(&self, pr: &PullRequestDetails) -> Result<Vec<FilePatch>> {
-        // We want the *cumulative* diff between base and head for the PR.
-        // `gh pr diff --patch` returns mbox-style `git format-patch` output
-        // — one patch per commit — so a 7-commit PR yields 7 separate
-        // `diff --git` blocks per file, which our parser dutifully turns
-        // into duplicate `DiffFile`s. Plain `gh pr diff` (no `--patch`)
-        // returns the single cumulative diff. Hard-won lesson; see the
-        // duplicate-files-in-list bug.
         let metadata = self.pull_request_file_metadata(pr)?;
-        crate::forge::chd_cache::diff_with_cache(
-            pr,
-            |pr| {
-                crate::forge::chd_cache::get_diff(pr).filter(|p| cached_headers_match(&metadata, p))
-            },
-            crate::forge::chd_cache::request_diff_fill,
-            || {
-                self.run_gh(
-                    vec![
-                        "pr".to_string(),
-                        "diff".to_string(),
-                        pr.number.to_string(),
-                        "--repo".to_string(),
-                        gh_repo_arg(&pr.repository),
-                        "--color".to_string(),
-                        "never".to_string(),
-                    ],
-                    &pr.repository.host,
-                )
-            },
-            |patch| pair_metadata_with_patch(metadata.clone(), patch.as_bytes()),
-        )
+        self.diff_with_metadata(pr, metadata)
     }
 
     fn local_checkout_path(&self) -> Option<PathBuf> {
@@ -1735,7 +1780,21 @@ index 1111111..2222222 100644
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    /// `RefCell`-shaped, but `Sync`, so fakes satisfy `GhCommandRunner`.
+    #[derive(Default)]
+    pub(crate) struct TestCell<T>(std::sync::Mutex<T>);
+
+    impl<T> TestCell<T> {
+        pub(crate) fn new(value: T) -> Self {
+            Self(std::sync::Mutex::new(value))
+        }
+        pub(crate) fn borrow(&self) -> std::sync::MutexGuard<'_, T> {
+            self.0.lock().unwrap()
+        }
+        pub(crate) fn borrow_mut(&self) -> std::sync::MutexGuard<'_, T> {
+            self.0.lock().unwrap()
+        }
+    }
 
     use super::*;
     use crate::forge::traits::ForgeBackend;
@@ -1800,16 +1859,16 @@ index 1111111..2222222 100644
 
     #[derive(Default)]
     struct FakeGhRunner {
-        calls: RefCell<Vec<Vec<String>>>,
+        calls: TestCell<Vec<Vec<String>>>,
         /// Captured stdin payloads, paired in order with `calls` entries that
         /// went through `run_with_stdin`. Empty for plain `run` invocations.
-        stdin_calls: RefCell<Vec<(Vec<String>, String)>>,
+        stdin_calls: TestCell<Vec<(Vec<String>, String)>>,
         /// When set, `run_with_stdin` returns this error instead of a stub
         /// success response. Lets tests exercise error mapping.
-        stdin_error: RefCell<Option<GhCommandError>>,
+        stdin_error: TestCell<Option<GhCommandError>>,
         /// When set, `run_with_stdin` returns this body as the success output.
         /// Defaults to `CREATE_REVIEW_RESPONSE_JSON` when None.
-        stdin_response: RefCell<Option<String>>,
+        stdin_response: TestCell<Option<String>>,
     }
 
     impl GhCommandRunner for FakeGhRunner {
@@ -2047,7 +2106,7 @@ index 1111111..2222222 100644
 
     #[test]
     fn replies_to_review_thread_with_graphql_variables_and_validates_result() {
-        struct ReplyRunner(std::cell::RefCell<Vec<Vec<String>>>, &'static str);
+        struct ReplyRunner(TestCell<Vec<Vec<String>>>, &'static str);
         impl GhCommandRunner for ReplyRunner {
             fn run(&self, args: &[String]) -> GhCommandResult<String> {
                 self.0.borrow_mut().push(args.to_vec());
@@ -2094,7 +2153,7 @@ index 1111111..2222222 100644
 
     #[test]
     fn updates_review_comment_with_stdin_variables_and_checks_confirmation() {
-        struct Runner(std::cell::RefCell<Vec<(Vec<String>, String)>>, &'static str);
+        struct Runner(TestCell<Vec<(Vec<String>, String)>>, &'static str);
         impl GhCommandRunner for Runner {
             fn run(&self, _: &[String]) -> GhCommandResult<String> {
                 panic!("must use stdin")
@@ -2150,7 +2209,7 @@ index 1111111..2222222 100644
 
     #[test]
     fn deletes_owned_comment_and_clears_pending_review_body_via_graphql_with_host() {
-        struct DeleteRunner(std::cell::RefCell<Vec<Vec<String>>>);
+        struct DeleteRunner(TestCell<Vec<Vec<String>>>);
         impl GhCommandRunner for DeleteRunner {
             fn run(&self, args: &[String]) -> GhCommandResult<String> {
                 self.0.borrow_mut().push(args.to_vec());
@@ -2188,7 +2247,7 @@ index 1111111..2222222 100644
 
     #[test]
     fn toggles_reaction_with_graphql_and_validates_subject() {
-        struct ReactionRunner(std::cell::RefCell<Vec<Vec<String>>>);
+        struct ReactionRunner(TestCell<Vec<Vec<String>>>);
         impl GhCommandRunner for ReactionRunner {
             fn run(&self, args: &[String]) -> GhCommandResult<String> {
                 self.0.borrow_mut().push(args.to_vec());
@@ -2252,7 +2311,7 @@ index 1111111..2222222 100644
 
     #[test]
     fn toggles_thread_resolution_with_validated_graphql_response_and_enterprise_host() {
-        struct ThreadRunner(std::cell::RefCell<Vec<Vec<String>>>);
+        struct ThreadRunner(TestCell<Vec<Vec<String>>>);
         impl GhCommandRunner for ThreadRunner {
             fn run(&self, args: &[String]) -> GhCommandResult<String> {
                 self.0.borrow_mut().push(args.to_vec());
@@ -2804,6 +2863,22 @@ Match host github-work
     }
 
     #[test]
+    fn parallel_fetch_returns_same_parts_as_serial_calls() {
+        let backend = GitHubGhBackend::with_runner(Some(repo()), FakeGhRunner::default());
+        let details = backend
+            .get_pull_request(parse_pull_request_target("125").unwrap())
+            .unwrap();
+        let (out, patches, _commits, _meta) = backend
+            .fetch_diff_commits_metadata(details.clone())
+            .unwrap();
+        assert_eq!(out.head_sha, details.head_sha);
+        assert_eq!(
+            patches.len(),
+            backend.get_pull_request_diff(&out).unwrap().len()
+        );
+    }
+
+    #[test]
     fn cached_patch_with_swapped_files_is_rejected() {
         let meta = |p: &str| FileMetadata {
             old_path: Some(PathBuf::from(p)),
@@ -3190,7 +3265,7 @@ Match host github-work
 
     #[test]
     fn should_attach_comment_to_existing_pending_review() {
-        struct PendingRunner(std::cell::RefCell<Vec<(Vec<String>, String)>>);
+        struct PendingRunner(TestCell<Vec<(Vec<String>, String)>>);
         impl GhCommandRunner for PendingRunner {
             fn run(&self, args: &[String]) -> GhCommandResult<String> {
                 if args.get(1).map(String::as_str) == Some("user") {
@@ -3235,7 +3310,7 @@ Match host github-work
 
     #[test]
     fn should_submit_existing_pending_review_instead_of_creating_another() {
-        struct PendingRunner(std::cell::RefCell<Vec<(Vec<String>, String)>>);
+        struct PendingRunner(TestCell<Vec<(Vec<String>, String)>>);
         impl GhCommandRunner for PendingRunner {
             fn run(&self, args: &[String]) -> GhCommandResult<String> {
                 if args.get(1).map(String::as_str) == Some("user") {
@@ -3264,7 +3339,7 @@ Match host github-work
 
     #[test]
     fn should_skip_duplicate_comment_on_submit_pending_review_retry() {
-        struct ExistingCommentsRunner(std::cell::RefCell<Vec<(Vec<String>, String)>>);
+        struct ExistingCommentsRunner(TestCell<Vec<(Vec<String>, String)>>);
         impl GhCommandRunner for ExistingCommentsRunner {
             fn run(&self, args: &[String]) -> GhCommandResult<String> {
                 if args.get(1).map(String::as_str) == Some("user") {
@@ -3339,7 +3414,7 @@ Match host github-work
 
     #[test]
     fn should_update_pending_review_body_on_draft_submit() {
-        struct UpdateBodyRunner(std::cell::RefCell<Vec<(Vec<String>, String)>>);
+        struct UpdateBodyRunner(TestCell<Vec<(Vec<String>, String)>>);
         impl GhCommandRunner for UpdateBodyRunner {
             fn run(&self, args: &[String]) -> GhCommandResult<String> {
                 if args.get(1).map(String::as_str) == Some("user") {

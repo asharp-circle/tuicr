@@ -654,6 +654,33 @@ pub trait ForgeBackend {
     /// list scopes the inline commit selector so users can narrow a PR's
     /// cumulative diff down to a contiguous subrange.
     fn list_pull_request_commits(&self, pr: &PullRequestDetails) -> Result<Vec<PullRequestCommit>>;
+    /// Fetch everything `fetch_pr_data` needs after the PR details: the merge
+    /// base refinement and diff, the commit list, and review metadata.
+    ///
+    /// The default runs them one after another. Backends whose runner is
+    /// `Sync` may override it to overlap the independent network calls, as
+    /// long as the diff is still taken at the refined `base_sha` of the
+    /// returned details.
+    #[allow(clippy::type_complexity)]
+    fn fetch_diff_commits_metadata(
+        &self,
+        mut details: PullRequestDetails,
+    ) -> Result<(
+        PullRequestDetails,
+        Vec<FilePatch>,
+        Vec<PullRequestCommit>,
+        PullRequestReviewMetadata,
+    )> {
+        if let Some(base_sha) = self.resolve_diff_base_sha(&details) {
+            details.base_sha = base_sha;
+        }
+        let patches = self.get_pull_request_diff(&details)?;
+        let commits = self.list_pull_request_commits(&details).unwrap_or_default();
+        let review_metadata = self
+            .list_pull_request_review_metadata(&details)
+            .unwrap_or_default();
+        Ok((details, patches, commits, review_metadata))
+    }
     /// Fetch minimal review metadata for commit-scope inference. Backends
     /// that cannot expose this cheaply can keep the default empty result.
     fn list_pull_request_review_metadata(
