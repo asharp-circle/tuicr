@@ -11,7 +11,7 @@ use crate::forge::traits::{
     PagedPullRequests, PullRequestCommit, PullRequestDetails, PullRequestInfo,
     PullRequestListQuery, PullRequestListScope, PullRequestTarget,
 };
-use crate::model::{DiffLine, FilePatch};
+use crate::model::{DiffLine, FilePatch, FileStatus};
 use crate::process::{
     CommandOutputError, CommandOutputErrorKind, run_command_output, run_command_output_with_stdin,
 };
@@ -1304,30 +1304,52 @@ where
     }
 }
 
-/// Cheap identity check for a cached patch against live file metadata: every
-/// block's `diff --git` header must equal the one built from its record's paths. A force-push
-/// that swaps files but keeps the count then falls back to the live fetch.
-/// Exact header equality; paths are never parsed from patch text.
+/// Identity check for a cached patch against live file metadata. Each block's
+/// `diff --git` header must equal the one built from its record's paths, and its
+/// extended header lines must agree with the record's status (new/deleted/rename/
+/// copy). A force-push that swaps files or changes a file's status then falls
+/// back to the live fetch. Paths are never parsed from patch text.
 fn cached_headers_match(metadata: &[FileMetadata], patch: &str) -> bool {
-    let headers: Vec<&str> = patch
-        .lines()
-        .filter(|line| line.starts_with("diff --git "))
-        .collect();
-    headers.len() == metadata.len()
-        && headers.iter().zip(metadata).all(|(header, meta)| {
+    let mut blocks: Vec<(&str, Vec<&str>)> = Vec::new();
+    let mut in_hunk = false;
+    for line in patch.lines() {
+        if line.starts_with("diff --git ") {
+            blocks.push((line, Vec::new()));
+            in_hunk = false;
+        } else if line.starts_with("@@") {
+            in_hunk = true;
+        } else if !in_hunk && let Some((_, ext)) = blocks.last_mut() {
+            ext.push(line);
+        }
+    }
+    blocks.len() == metadata.len()
+        && blocks.iter().zip(metadata).all(|((header, ext), meta)| {
             let (Some(old), Some(new)) = (
                 meta.old_path.as_ref().or(meta.new_path.as_ref()),
                 meta.new_path.as_ref().or(meta.old_path.as_ref()),
             ) else {
                 return false;
             };
-            // Exact equality; quoted/odd paths simply miss and go live.
-            **header
-                == format!(
-                    "diff --git a/{} b/{}",
-                    old.to_string_lossy(),
-                    new.to_string_lossy()
-                )
+            let has = |prefix: &str| ext.iter().any(|l| l.starts_with(prefix));
+            let status_ok = match meta.status {
+                FileStatus::Added => has("new file mode") && !has("deleted file mode"),
+                FileStatus::Deleted => has("deleted file mode") && !has("new file mode"),
+                FileStatus::Renamed => has("rename from"),
+                FileStatus::Copied => has("copy from"),
+                FileStatus::Modified => {
+                    !has("new file mode")
+                        && !has("deleted file mode")
+                        && !has("rename from")
+                        && !has("copy from")
+                }
+            };
+            status_ok
+                && **header
+                    == format!(
+                        "diff --git a/{} b/{}",
+                        old.to_string_lossy(),
+                        new.to_string_lossy()
+                    )
         })
 }
 
@@ -2788,9 +2810,16 @@ Match host github-work
             new_path: Some(PathBuf::from(p)),
             status: crate::model::FileStatus::Modified,
         };
-        let patch = "diff --git a/old.rs b/old.rs\n@@ -1 +1 @@\n-a\n+b\n";
+        let patch =
+            "diff --git a/old.rs b/old.rs\n--- a/old.rs\n+++ b/old.rs\n@@ -1 +1 @@\n-a\n+b\n";
         assert!(cached_headers_match(&[meta("old.rs")], patch));
         assert!(!cached_headers_match(&[meta("new.rs")], patch));
+        let deleted = "diff --git a/old.rs b/old.rs\ndeleted file mode 100644\n@@ -1 +0,0 @@\n-a\n";
+        assert!(!cached_headers_match(&[meta("old.rs")], deleted));
+        let mut gone = meta("old.rs");
+        gone.status = crate::model::FileStatus::Deleted;
+        assert!(cached_headers_match(&[gone.clone()], deleted));
+        assert!(!cached_headers_match(&[gone], patch));
         let nested = "diff --git a/src/foo.rs b/src/foo.rs\n";
         assert!(!cached_headers_match(&[meta("foo.rs")], nested));
         assert!(!cached_headers_match(

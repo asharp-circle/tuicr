@@ -29,7 +29,11 @@ fn enabled() -> bool {
 
 /// Run `chd` with a hard timeout; `None` on absence, non-zero exit, or timeout.
 fn run_chd(args: &[String], timeout: Duration) -> Option<String> {
-    let mut child = Command::new("chd")
+    run_program("chd", args, timeout)
+}
+
+fn run_program(program: &str, args: &[String], timeout: Duration) -> Option<String> {
+    let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
