@@ -368,22 +368,23 @@ These are non-obvious things the implementation chain hit. Worth preserving for 
 
 ### chd PR cache
 
-`forge/chd_cache.rs` talks to `chd pr-cache`. chd owns the cache files; tuicr never writes them or supplies cache
-bytes. Tuicr only requests `fill-diff` and `fill-blob`, and chd fetches SHA-pinned content itself, keyed per
-credential. Fill requests run in the background, are deduplicated, capped at two in flight, and every chd call has a
-timeout.
+`forge/chd_cache.rs` talks to `chd pr-cache`. chd owns the cache files. tuicr never writes them or supplies cache
+bytes. tuicr requests only `fill-diff` and `fill-blob`, and chd fetches SHA-pinned content itself, keyed per
+credential. Fill requests run in the background and are deduplicated. tuicr caps them at two in flight, and every chd
+call has a timeout.
 
 GitHub `get_pull_request_diff` reuses a cached patch only on an exact (head SHA, resolved merge base) key, and only when
-every `diff --git` header equals the live file metadata. Otherwise it fetches live and requests a fill.
-`fetch_file_via_api` reads immutable revision blobs keyed by commit SHA. Timestamps never prove freshness. If chd is
-absent, misses, errors, or times out, tuicr fetches live. `TUICR_CHD_CACHE=0` disables the cache.
+every `diff --git` header and file status equals the live file metadata. Otherwise tuicr fetches live and requests a
+fill. `fetch_file_via_api` reads immutable revision blobs keyed by commit SHA. Cache keys use commit SHAs because
+timestamps do not guarantee freshness. If chd is absent, misses, errors, or times out, tuicr fetches live.
+`TUICR_CHD_CACHE=0` disables the cache.
 
 Each daemon cycle chd prewarms diffs, blobs, and ETag-validated `pr`, `comments`, and `reviews` metadata for
-review-requested PRs, then garbage-collects old files. Its `revalidate` command returns server-validated metadata
-(`If-None-Match`; a 304 proves the cached body current) and fails when freshness cannot be verified, including full
-or multi-page lists. tuicr does not call it: its comments, reviews, checks, and PR info use GraphQL, which has no
-validators, so they are always fetched live. That is correct but means those requests are never served from the cache
-and stay as slow as without chd.
+review-requested PRs, then garbage-collects old files. Its `revalidate` command returns server-validated metadata using
+`If-None-Match`, where HTTP 304 proves the cached body current. It fails when freshness cannot be verified, including
+on full or multi-page lists. tuicr does not call it. Its comments, reviews, checks, and PR info use GraphQL, which has
+no validators, so tuicr always fetches them live. Consequently, those requests bypass the cache and incur normal
+network latency.
 
 ### Keeping Docs Updated
 
