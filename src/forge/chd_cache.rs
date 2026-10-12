@@ -17,7 +17,7 @@ use crate::forge::traits::{ForgeRepository, PullRequestDetails};
 const DISABLE_ENV: &str = "TUICR_CHD_CACHE";
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
 const FILL_TIMEOUT: Duration = Duration::from_secs(120);
-const MAX_FILLS_IN_FLIGHT: usize = 2;
+const MAX_FILLS_IN_FLIGHT: usize = 4;
 
 pub(crate) fn is_enabled() -> bool {
     enabled()
@@ -138,6 +138,32 @@ fn parse_pr_identity(json: &str) -> Option<(String, String)> {
             .map(str::to_string)
     };
     Some((sha("head")?, sha("base")?))
+}
+
+/// Cached PR collection rows (`commits`, as a JSON array) for
+/// exactly this head and base tip. The rows are a pure function of those two
+/// SHAs, so an exact key match needs no further validation.
+pub fn get_list(pr: &PullRequestDetails, name: &str) -> Option<String> {
+    if !enabled() || pr.head_sha.is_empty() || pr.base_sha.is_empty() {
+        return None;
+    }
+    run_chd(&list_args("get-list", pr, name), READ_TIMEOUT).filter(|rows| !rows.is_empty())
+}
+
+/// Ask chd to page through and store this collection. chd stores it only if
+/// the PR identity is unchanged before and after its own fetch.
+pub fn request_list_fill(pr: &PullRequestDetails, name: &str) {
+    if enabled() && !pr.head_sha.is_empty() && !pr.base_sha.is_empty() {
+        spawn_fill(list_args("fill-list", pr, name));
+    }
+}
+
+fn list_args(op: &str, pr: &PullRequestDetails, name: &str) -> Vec<String> {
+    let mut args = key_args(op, pr);
+    // chd order: HOST OWNER REPO N NAME HEAD BASE_TIP
+    let (head, base) = (args.remove(6), args.remove(6));
+    args.extend([name.to_string(), head, base]);
+    args
 }
 
 /// Cached patch for exactly this head + merge base, if chd has one.
@@ -284,6 +310,24 @@ mod tests {
     }
 
     #[test]
+    fn list_args_follow_chd_order() {
+        assert_eq!(
+            list_args("get-list", &pr(), "commits"),
+            [
+                "pr-cache",
+                "get-list",
+                "github.com",
+                "o",
+                "r",
+                "1",
+                "commits",
+                "a",
+                "b"
+            ]
+        );
+    }
+
+    #[test]
     fn parses_pr_identity() {
         let j = r#"{"head":{"sha":"h1"},"base":{"sha":"b1"}}"#;
         assert_eq!(parse_pr_identity(j), Some(("h1".into(), "b1".into())));
@@ -323,11 +367,12 @@ mod tests {
     fn fill_requests_are_deduplicated_and_capped() {
         let mut set = in_flight().lock().unwrap();
         set.clear();
-        set.insert("a".into());
-        set.insert("b".into());
+        for k in ["a", "b", "c", "d"] {
+            set.insert(k.into());
+        }
         drop(set);
-        spawn_fill(vec!["c".into()]);
-        assert_eq!(in_flight().lock().unwrap().len(), 2);
+        spawn_fill(vec!["e".into()]);
+        assert_eq!(in_flight().lock().unwrap().len(), MAX_FILLS_IN_FLIGHT);
         in_flight().lock().unwrap().clear();
     }
 }

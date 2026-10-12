@@ -370,7 +370,7 @@ These are non-obvious things the implementation chain hit. Worth preserving for 
 
 `forge/chd_cache.rs` talks to `chd pr-cache`. chd owns the cache files. tuicr never writes them or supplies cache
 bytes. tuicr requests only `fill-diff` and `fill-blob`, and chd fetches SHA-pinned content itself, keyed per
-credential. Fill requests run in the background and are deduplicated. tuicr caps them at two in flight, and every chd
+credential. Fill requests run in the background and are deduplicated. tuicr caps them at four in flight, and every chd
 call has a timeout.
 
 GitHub `get_pull_request_diff` reuses a cached patch only on an exact (head SHA, resolved merge base) key, and only when
@@ -379,7 +379,13 @@ fill. `fetch_file_via_api` reads immutable revision blobs keyed by commit SHA. C
 timestamps do not guarantee freshness. If chd is absent, misses, errors, or times out, tuicr fetches live. With `TUICR_PROFILE`, `pr.diff_cache_lookup` (hit/miss), `pr.diff_cache_pair` (accepted/rejected) and `pr.diff_live_fetch` spans show cache outcomes.
 `TUICR_CHD_CACHE=0` disables the cache.
 
-PR open overlap: `ForgeBackend::fetch_pr_data_overlapped` (GitHub only) asks chd to ETag-revalidate REST `pulls/N` (`chd pr-cache revalidate … pr`; 304 proves the cached body current, failure means no overlap). The validated head and base tip seed the diff/commits/review-metadata fetches, which run in parallel with the live GraphQL PR info. They are kept only if the info reports the same head and base; otherwise `reconcile_overlap` refetches serially, so a force push or retarget never pairs data with another revision. `pr.chd_revalidate_pr` and `pr.fetch_diff_commits_metadata_early` profile spans show it. Measured on PR 185: `app_init` ~3.5–5.8s with `TUICR_CHD_CACHE=0` vs ~1.9–2.2s with it. Still always live: GraphQL PR info/checks/threads, review metadata, commits, and the file list (multi-page collections have no single ETag).
+PR open overlap: `ForgeBackend::fetch_pr_data_overlapped` (GitHub only) asks chd to ETag-revalidate REST `pulls/N` (`chd pr-cache revalidate … pr`). A 304 proves the cached body current; failure means no overlap. The validated head and base tip seed the diff, commits and review-metadata fetches, which run in parallel with the live GraphQL PR info. They are kept only if the info reports the same head and base; otherwise `reconcile_overlap` refetches serially, so a force push or retarget visible by then never pairs data with another revision. A push landing while uncached commits, files or diff fetches are in flight is a window the serial path shares, narrowed but not closed.
+
+Spans `pr.chd_revalidate_pr` and `pr.fetch_diff_commits_metadata_early` show the overlap. Measured on PR 185: `app_init` ~3.0–6.7s with `TUICR_CHD_CACHE=0` vs ~1.7–2.2s with it.
+
+PR `commits` are a pure function of (head, base tip). chd stores them keyed by that pair (`get-list`/`fill-list`, all 100-row pages), writing only if the `pulls/N` identity validated before and after its page fetch equals the key and the rows equal the SHA-addressed `compare/tip...head` commit list. A moved head or retargeted base is a different key, so no age or ETag is needed. tuicr requests lists with the validated pair as key; a refined merge-base key misses.
+
+Always live: the `files` list (no SHA-addressed endpoint reproduces its rows and order; `compare` caps at 300 files), GraphQL PR info, checks and threads (resolved state exists only in GraphQL), review metadata (GraphQL reviews), and the merge-base lookup.
 
 Each daemon cycle chd prewarms diffs, blobs, and ETag-validated `pr`, `comments`, and `reviews` metadata for
 review-requested PRs, then garbage-collects old files. Its `revalidate` command returns server-validated metadata using

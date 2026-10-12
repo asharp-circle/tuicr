@@ -250,6 +250,40 @@ where
     }
 
     fn pull_request_file_metadata(&self, pr: &PullRequestDetails) -> Result<Vec<FileMetadata>> {
+        self.pull_request_file_metadata_live(pr)
+    }
+
+    fn list_pull_request_commits_live(
+        &self,
+        pr: &PullRequestDetails,
+    ) -> Result<Vec<PullRequestCommit>> {
+        let mut commits: Vec<PullRequestCommit> = Vec::new();
+        for page in 1..=10 {
+            let endpoint = format!(
+                "repos/{}/{}/pulls/{}/commits?per_page=100&page={}",
+                pr.repository.owner, pr.repository.name, pr.number, page,
+            );
+            let mut args = vec!["api".to_string()];
+            if pr.repository.host != DEFAULT_GITHUB_HOST {
+                args.push("--hostname".to_string());
+                args.push(pr.repository.host.clone());
+            }
+            args.push(endpoint);
+            let output = self.run_gh(args, &pr.repository.host)?;
+            let rows: Vec<GhPrCommit> = serde_json::from_str(&output)?;
+            let received = rows.len();
+            commits.extend(rows.into_iter().map(GhPrCommit::into_pull_request_commit));
+            if received < 100 {
+                break;
+            }
+        }
+        Ok(commits)
+    }
+
+    fn pull_request_file_metadata_live(
+        &self,
+        pr: &PullRequestDetails,
+    ) -> Result<Vec<FileMetadata>> {
         let mut metadata = Vec::new();
         for page in 1..=30 {
             let endpoint = format!(
@@ -420,26 +454,16 @@ where
         // GitHub paginates `pulls/<num>/commits` at 250 commits per page (max
         // per_page=100; PRs are capped at 250 commits via the API). Paginate
         // explicitly so multi-page PRs work; bound the loop defensively.
-        let mut commits: Vec<PullRequestCommit> = Vec::new();
-        for page in 1..=10 {
-            let endpoint = format!(
-                "repos/{}/{}/pulls/{}/commits?per_page=100&page={}",
-                pr.repository.owner, pr.repository.name, pr.number, page,
-            );
-            let mut args = vec!["api".to_string()];
-            if pr.repository.host != DEFAULT_GITHUB_HOST {
-                args.push("--hostname".to_string());
-                args.push(pr.repository.host.clone());
-            }
-            args.push(endpoint);
-            let output = self.run_gh(args, &pr.repository.host)?;
-            let rows: Vec<GhPrCommit> = serde_json::from_str(&output)?;
-            let received = rows.len();
-            commits.extend(rows.into_iter().map(GhPrCommit::into_pull_request_commit));
-            if received < 100 {
-                break;
-            }
+        if let Some(rows) = crate::forge::chd_cache::get_list(pr, "commits")
+            .and_then(|json| serde_json::from_str::<Vec<GhPrCommit>>(&json).ok())
+        {
+            return Ok(rows
+                .into_iter()
+                .map(GhPrCommit::into_pull_request_commit)
+                .collect());
         }
+        let commits = self.list_pull_request_commits_live(pr)?;
+        crate::forge::chd_cache::request_list_fill(pr, "commits");
         Ok(commits)
     }
 
