@@ -1305,9 +1305,9 @@ where
 }
 
 /// Cheap identity check for a cached patch against live file metadata: every
-/// block's `diff --git` header must mention its record's path. A force-push
+/// block's `diff --git` header must equal the one built from its record's paths. A force-push
 /// that swaps files but keeps the count then falls back to the live fetch.
-/// Substring match only; paths are never parsed from patch text.
+/// Exact header equality; paths are never parsed from patch text.
 fn cached_headers_match(metadata: &[FileMetadata], patch: &str) -> bool {
     let headers: Vec<&str> = patch
         .lines()
@@ -1315,10 +1315,19 @@ fn cached_headers_match(metadata: &[FileMetadata], patch: &str) -> bool {
         .collect();
     headers.len() == metadata.len()
         && headers.iter().zip(metadata).all(|(header, meta)| {
-            meta.new_path
-                .as_ref()
-                .or(meta.old_path.as_ref())
-                .is_some_and(|path| header.contains(path.to_string_lossy().as_ref()))
+            let (Some(old), Some(new)) = (
+                meta.old_path.as_ref().or(meta.new_path.as_ref()),
+                meta.new_path.as_ref().or(meta.old_path.as_ref()),
+            ) else {
+                return false;
+            };
+            // Exact equality; quoted/odd paths simply miss and go live.
+            **header
+                == format!(
+                    "diff --git a/{} b/{}",
+                    old.to_string_lossy(),
+                    new.to_string_lossy()
+                )
         })
 }
 
@@ -2782,6 +2791,8 @@ Match host github-work
         let patch = "diff --git a/old.rs b/old.rs\n@@ -1 +1 @@\n-a\n+b\n";
         assert!(cached_headers_match(&[meta("old.rs")], patch));
         assert!(!cached_headers_match(&[meta("new.rs")], patch));
+        let nested = "diff --git a/src/foo.rs b/src/foo.rs\n";
+        assert!(!cached_headers_match(&[meta("foo.rs")], nested));
         assert!(!cached_headers_match(
             &[meta("old.rs"), meta("x.rs")],
             patch
