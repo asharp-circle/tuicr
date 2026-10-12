@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -1427,6 +1427,10 @@ pub struct App {
     pub supports_keyboard_enhancement: bool,
     pub show_file_list: bool,
     pub powerline: bool,
+    /// Vim-mode name to icon for the status-bar mode label; text when unmapped.
+    pub mode_icons: BTreeMap<String, String>,
+    /// Repository name to icon for the PR header; the name when unmapped.
+    pub repo_icons: BTreeMap<String, String>,
     /// `false` while the terminal reports focus lost; the UI renders dimmed.
     pub focused: bool,
     /// Color the UI dims toward while unfocused (the theme's real `panel_bg`,

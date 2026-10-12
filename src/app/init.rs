@@ -605,6 +605,8 @@ impl App {
             supports_keyboard_enhancement: false,
             show_file_list: true,
             powerline: false,
+            mode_icons: BTreeMap::new(),
+            repo_icons: BTreeMap::new(),
             focused: true,
             dim_bg: Color::Reset,
             compact_folders: false,

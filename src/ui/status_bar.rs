@@ -435,7 +435,7 @@ fn header_source_chunk_with_title_limit(app: &App, max_title_len: Option<usize>)
             }
         }
         DiffSource::PullRequest(pr) => {
-            let slug = pr.key.repository.display_name();
+            let slug = repo_label(app, &pr.key.repository);
             let limit = max_title_len.unwrap_or(60);
             let mut s = if limit == 0 || pr.title.is_empty() {
                 format!("{slug}#{number}", number = pr.key.number)
@@ -462,6 +462,29 @@ fn header_source_chunk_with_title_limit(app: &App, max_title_len: Option<usize>)
     }
 }
 
+/// `display_name()` with the trailing repo name swapped for its configured icon.
+fn repo_label(app: &App, repo: &crate::forge::traits::ForgeRepository) -> String {
+    let display = repo.display_name();
+    match (
+        app.repo_icons.get(&repo.name),
+        display.strip_suffix(repo.name.as_str()),
+    ) {
+        (Some(icon), Some(prefix)) if prefix.is_empty() || prefix.ends_with('/') => {
+            format!("{prefix}{icon}")
+        }
+        _ => display,
+    }
+}
+
+/// Mode label: the shared Vim-mode icon when mapped, else the text name.
+fn mode_label(app: &App, key: &str, text: &str, detail: Option<String>) -> String {
+    let name = app.mode_icons.get(key).map_or(text, String::as_str);
+    match detail {
+        Some(detail) => format!(" {name} {detail} "),
+        None => format!(" {name} "),
+    }
+}
+
 pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
 
@@ -485,31 +508,29 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         )]
     } else {
         let mode_str = match app.input_mode {
-            InputMode::Normal => {
-                if let Some(count) = app.pending_count {
-                    format!(" NORMAL {count} ")
-                } else {
-                    " NORMAL ".to_string()
-                }
-            }
+            InputMode::Normal => mode_label(
+                app,
+                "normal",
+                "NORMAL",
+                app.pending_count.map(|count| count.to_string()),
+            ),
             InputMode::Command => " COMMAND ".to_string(),
             InputMode::Search => " SEARCH ".to_string(),
-            InputMode::Comment => " COMMENT ".to_string(),
+            InputMode::Comment => mode_label(app, "insert", "COMMENT", None),
             InputMode::Help => " HELP ".to_string(),
             InputMode::MessageDetails => " ERROR ".to_string(),
             InputMode::Summary => " SUMMARY ".to_string(),
             InputMode::Confirm => " CONFIRM ".to_string(),
             InputMode::CommitSelect => " SELECT ".to_string(),
             InputMode::VisualSelect => {
-                if let Some((range, _)) = app.visual_selection_line_range() {
+                let detail = app.visual_selection_line_range().map(|(range, _)| {
                     if range.is_single() {
-                        format!(" VISUAL L{} ", range.start)
+                        format!("L{}", range.start)
                     } else {
-                        format!(" VISUAL L{}-L{} ", range.start, range.end)
+                        format!("L{}-L{}", range.start, range.end)
                     }
-                } else {
-                    " VISUAL ".to_string()
-                }
+                });
+                mode_label(app, "visual", "VISUAL", detail)
             }
             InputMode::SubmitResolver => " RESOLVE ".to_string(),
             InputMode::SubmitConfirm => " SUBMIT ".to_string(),
@@ -1581,5 +1602,38 @@ mod header_snapshot_tests {
         let app = build_pr_app(pr_source(false, false));
         let line = row_text(&draw_header_with_width(&app, 140), 0);
         assert!(!line.contains('\u{e0b0}'), "got: {line:?}");
+    }
+
+    #[test]
+    fn should_render_mapped_mode_icon_and_repo_icon() {
+        let mut app = build_pr_app(pr_source(false, false));
+        app.mode_icons.insert("normal".into(), "\u{e62b}".into());
+        app.repo_icons.insert("tuicr".into(), "\u{f0ee}".into());
+        let mut terminal = Terminal::new(TestBackend::new(200, 1)).unwrap();
+        terminal
+            .draw(|frame| super::render_status_bar(frame, &app, frame.area()))
+            .unwrap();
+        let line = row_text(&terminal.backend().buffer().clone(), 0);
+        assert!(
+            line.contains("\u{e62b}") && !line.contains("NORMAL"),
+            "{line:?}"
+        );
+        let repo = ForgeRepository::github("github.com", "agavra", "tuicr");
+        assert_eq!(super::repo_label(&app, &repo), "agavra/\u{f0ee}");
+    }
+
+    #[test]
+    fn should_fall_back_to_text_and_name_when_unmapped() {
+        let app = build_pr_app(pr_source(false, false));
+        assert_eq!(
+            super::mode_label(&app, "normal", "NORMAL", None),
+            " NORMAL "
+        );
+        assert_eq!(
+            super::mode_label(&app, "normal", "NORMAL", Some("3".into())),
+            " NORMAL 3 "
+        );
+        let repo = ForgeRepository::github("github.com", "agavra", "tuicr");
+        assert_eq!(super::repo_label(&app, &repo), "agavra/tuicr");
     }
 }

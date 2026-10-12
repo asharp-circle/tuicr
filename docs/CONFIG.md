@@ -66,6 +66,11 @@ comment_types = [
   { id = "nit", label = "nitpick", definition = "small optional tweaks", color = "#d19a66" },
 ]
 
+[mode_icons] # optional; unmapped modes show their text name
+normal = "N"
+[repo_icons] # optional; unmapped repos show their name
+tuicr = "T"
+
 [ignore_whitespace_overrides] # only used with ignore_whitespace = "auto"
 rs = false                    # keep Rust whitespace changes
 custom = true                 # ignore whitespace in *.custom files
@@ -97,6 +102,8 @@ session_header = true
 | `ignore_whitespace`        | `false`      | Whitespace comparison for local Git, jj, and hg diffs: `false` compares normally, `true` ignores all whitespace, and `"auto"` chooses by file extension. PR diffs are unchanged. See [Whitespace comparison](#whitespace-comparison). |
 | `ignore_whitespace_overrides` | (none)    | Table of extension-to-boolean overrides, used only with `ignore_whitespace = "auto"`. `true` ignores whitespace; `false` compares normally. |
 | `powerline`                | `false`      | Render the header and status bar as Powerline segments (requires a Nerd Font). Segment colors come from the optional theme keys `segment_primary` and `segment_secondary`. |
+| `mode_icons`               | (none)       | Table mapping Vim-style modes to status-bar icons (`normal`, `visual`, and `insert`, which labels comment entry; the `:` and `/` prompts keep their prefix). Unmapped modes keep their text label. Also read from `icons.toml` next to `config.toml`; entries in `config.toml` win. |
+| `repo_icons`               | (none)       | Table mapping repository names to icons that replace the repo name in the PR header (`owner/<icon>#123`). Unmapped repos show the name. Also read from `icons.toml`. |
 | `show_file_list`           | `true`       | Whether the file list panel is visible on startup. Toggle with `<leader>e`.                                                                                |
 | `compact_folders` | `false` | Join single-child directory chains into one file-tree row. Restart tuicr after changing this setting. |
 | `show_pr_checks`           | `false`      | Whether PR CI checks are fetched and shown. Set to `true` to include GitHub check rollups.                                                           |
