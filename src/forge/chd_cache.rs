@@ -27,7 +27,7 @@ fn enabled() -> bool {
     std::env::var(DISABLE_ENV).map(|v| v != "0").unwrap_or(true)
 }
 
-/// Run `chd` with a hard timeout; `None` on absence, non-zero exit, or timeout.
+/// Run `chd` with a hard timeout and return `None` on absence, non-zero exit, or timeout.
 fn run_chd(args: &[String], timeout: Duration) -> Option<String> {
     run_program("chd", args, timeout)
 }
@@ -146,8 +146,8 @@ fn blob_args(op: &str, repo: &ForgeRepository, sha: &str, path: &str) -> Vec<Str
     ]
 }
 
-/// Use the cached patch only if `pair` accepts it against live metadata;
-/// otherwise fetch live and ask chd to fill the entry.
+/// Use the cached patch only if `pair` accepts it against live metadata.
+/// Otherwise, fetch live and ask chd to fill the entry.
 pub fn diff_with_cache<T>(
     pr: &PullRequestDetails,
     lookup: impl FnOnce(&PullRequestDetails) -> Option<String>,
