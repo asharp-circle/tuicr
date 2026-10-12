@@ -1,13 +1,13 @@
 //! Client for the chd-owned PR cache (`chd pr-cache ...`).
 //!
-//! chd is the only writer of cache files; tuicr reads and contributes through
+//! chd is the only writer of cache files; tuicr reads and requests fills through
 //! the CLI. A diff is reused only on an exact (head, resolved merge base)
 //! match, never on age. Any chd failure (absent, miss, error) falls back to
 //! the live fetch.
 
 use crate::error::Result;
 use crate::forge::traits::{ForgeRepository, PullRequestDetails};
-use crate::process::{run_command_output, run_command_output_with_stdin};
+use crate::process::run_command_output;
 
 const DISABLE_ENV: &str = "TUICR_CHD_CACHE";
 
@@ -42,12 +42,18 @@ pub fn get_diff(pr: &PullRequestDetails) -> Option<String> {
         .filter(|patch| !patch.is_empty())
 }
 
-/// Contribute a freshly fetched patch; failures are ignored (cache is optional).
-pub fn put_diff(pr: &PullRequestDetails, patch: &str) {
-    if !enabled() || pr.head_sha.is_empty() || pr.base_sha.is_empty() || patch.is_empty() {
+/// Ask chd to fill its cache for this exact (head, merge base) in the
+/// background. chd fetches the SHA-pinned diff itself; tuicr never supplies
+/// cache bytes, so a diff fetched while the PR moved cannot be stored under
+/// the wrong identity.
+pub fn put_diff(pr: &PullRequestDetails, _live_patch: &str) {
+    if !enabled() || pr.head_sha.is_empty() || pr.base_sha.is_empty() {
         return;
     }
-    let _ = run_command_output_with_stdin("chd", None, key_args("put-diff", pr), patch);
+    let args = key_args("fill-diff", pr);
+    std::thread::spawn(move || {
+        let _ = run_command_output("chd", None, args);
+    });
 }
 
 /// Immutable file content at a revision SHA, if chd has it.
@@ -58,15 +64,13 @@ pub fn get_blob(repo: &ForgeRepository, sha: &str, path: &str) -> Option<String>
     run_command_output("chd", None, blob_args("get-blob", repo, sha, path)).ok()
 }
 
-/// Contribute revision content (immutable, so no validation is needed).
-pub fn put_blob(repo: &ForgeRepository, sha: &str, path: &str, content: &str) {
+/// Ask chd to fetch and store this revision file (raw bytes) in the background.
+pub fn put_blob(repo: &ForgeRepository, sha: &str, path: &str, _content: &str) {
     if enabled() && !sha.is_empty() {
-        let _ = run_command_output_with_stdin(
-            "chd",
-            None,
-            blob_args("put-blob", repo, sha, path),
-            content,
-        );
+        let args = blob_args("fill-blob", repo, sha, path);
+        std::thread::spawn(move || {
+            let _ = run_command_output("chd", None, args);
+        });
     }
 }
 
@@ -104,7 +108,7 @@ pub fn revalidate_meta(pr: &PullRequestDetails, name: &str) -> std::result::Resu
 }
 
 /// Use the cached patch only if `pair` accepts it against live metadata;
-/// otherwise fetch live and contribute the result.
+/// otherwise fetch live and ask chd to fill the entry.
 pub fn diff_with_cache<T>(
     pr: &PullRequestDetails,
     lookup: impl FnOnce(&PullRequestDetails) -> Option<String>,
