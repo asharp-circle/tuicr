@@ -19,8 +19,35 @@ struct OpenBundle {
     reviews: Option<String>,
     merge_base: Option<String>,
     commits: Option<String>,
+    parts: InfoParts,
+    viewer: Option<String>,
     /// Per-resource provenance, e.g. `files=validated_cache(pages=2,304=2)`.
     provenance: String,
+}
+
+/// Validated REST payloads for live `gh pr view` fields (`None` if unvalidated).
+#[derive(Debug, Clone, Default)]
+pub struct InfoParts {
+    pub check_runs: Option<String>,
+    pub statuses: Option<String>,
+    pub issue_comments: Option<String>,
+    pub requested: Option<String>,
+}
+
+/// Which optional info sections the caller displays, so chd skips the rest.
+#[derive(Debug, Clone, Copy)]
+pub struct InfoSelection {
+    pub checks: bool,
+    pub comments: bool,
+}
+
+impl Default for InfoSelection {
+    fn default() -> Self {
+        Self {
+            checks: true,
+            comments: true,
+        }
+    }
 }
 
 /// Stashed bundle and sequence number for the most recent open.
@@ -60,7 +87,11 @@ fn repo_key(repo: &ForgeRepository) -> String {
 
 /// Validates PR identity and caches preloaded bundle data via `chd pr-cache open`.
 /// Returns `(head, base)` if valid. Unvalidated fields fall back to live fetches.
-pub fn open_bundle(repo: &ForgeRepository, number: u64) -> Option<(String, String)> {
+pub fn open_bundle(
+    repo: &ForgeRepository,
+    number: u64,
+    wanted: InfoSelection,
+) -> Option<(String, String)> {
     // Invalidate prior state so late-finishing opens cannot overwrite newer data.
     let ticket = with_stash(|st| {
         st.latest += 1;
@@ -80,6 +111,8 @@ pub fn open_bundle(repo: &ForgeRepository, number: u64) -> Option<(String, Strin
     ]
     .iter()
     .map(|s| s.to_string())
+    .chain((!wanted.checks).then(|| "--no-checks".to_string()))
+    .chain((!wanted.comments).then(|| "--no-comments".to_string()))
     .collect();
     let out = crate::profile::time("pr.chd_open_bundle", || run_chd(&args, OPEN_TIMEOUT))?;
     let mut bundle = parse_open_bundle(&out, repo, number)?;
@@ -122,6 +155,16 @@ fn parse_open_bundle(json: &str, repo: &ForgeRepository, number: u64) -> Option<
         reviews: rows("reviews"),
         merge_base: sha("merge_base").filter(|m| m.len() == 40),
         commits: rows("commits"),
+        parts: InfoParts {
+            check_runs: rows("check_runs"),
+            statuses: rows("statuses"),
+            issue_comments: rows("issue_comments"),
+            requested: v
+                .get("requested")
+                .filter(|r| r.is_object())
+                .map(|r| r.to_string()),
+        },
+        viewer: sha("viewer"),
         provenance: summarize_provenance(v.get("provenance")),
     })
 }
@@ -193,6 +236,39 @@ pub fn take_stashed_reviews(pr: &PullRequestDetails) -> Option<String> {
             && bundle.head == pr.head_sha
             && bundle.base == pr.base_sha)
             .then(|| bundle.reviews.take())
+            .flatten()
+    })
+}
+
+/// Consumes the validated info parts for exactly this head and base tip.
+pub fn take_stashed_info_parts(pr: &PullRequestDetails) -> Option<InfoParts> {
+    with_stash(|st| {
+        let bundle = st.bundle.as_mut()?;
+        (bundle.repo == repo_key(&pr.repository)
+            && bundle.number == pr.number
+            && bundle.head == pr.head_sha
+            && bundle.base == pr.base_sha)
+            .then(|| std::mem::take(&mut bundle.parts))
+    })
+}
+
+/// Copies the info parts without consuming them, to decide early whether the
+/// bundle can complete the PR info or a full live query must start now.
+pub fn peek_info_parts(pr: &PullRequestDetails) -> Option<InfoParts> {
+    stashed(&pr.repository, pr.number, &pr.head_sha, &pr.base_sha, |b| {
+        Some(b.parts.clone())
+    })
+}
+
+/// Consumes the credential-validated viewer login for exactly this PR identity.
+pub fn take_stashed_viewer(pr: &PullRequestDetails) -> Option<String> {
+    with_stash(|st| {
+        let bundle = st.bundle.as_mut()?;
+        (bundle.repo == repo_key(&pr.repository)
+            && bundle.number == pr.number
+            && bundle.head == pr.head_sha
+            && bundle.base == pr.base_sha)
+            .then(|| bundle.viewer.take())
             .flatten()
     })
 }
@@ -272,7 +348,10 @@ mod tests {
         install_fake_chd(Some(std::rc::Rc::new(|_| {
             Some(r#"{"head":"a","base":"b","files":[1],"reviews":[2]}"#.to_string())
         })));
-        assert_eq!(open_bundle(&repo, 1), Some(("a".into(), "b".into())));
+        assert_eq!(
+            open_bundle(&repo, 1, InfoSelection::default()),
+            Some(("a".into(), "b".into()))
+        );
         assert_eq!(stashed_files(&pr()).as_deref(), Some("[1]"));
         let mut retargeted = pr();
         retargeted.base_sha = "z".into();
@@ -291,10 +370,25 @@ mod tests {
         install_fake_chd(Some(std::rc::Rc::new(|_| {
             Some(r#"{"head":"a","base":"b","files":[1]}"#.to_string())
         })));
-        assert!(open_bundle(&repo, 1).is_some());
+        assert!(open_bundle(&repo, 1, InfoSelection::default()).is_some());
         install_fake_chd(Some(std::rc::Rc::new(|_| None)));
-        assert!(open_bundle(&repo, 1).is_none());
+        assert!(open_bundle(&repo, 1, InfoSelection::default()).is_none());
         assert!(stashed_files(&pr()).is_none());
+        install_fake_chd(None);
+    }
+
+    #[test]
+    fn unrequested_sections_are_passed_to_chd_as_flags() {
+        let repo = ForgeRepository::github("github.com", "o", "r");
+        install_fake_chd(Some(std::rc::Rc::new(|args| {
+            assert_eq!(&args[6..], ["--no-checks"]);
+            Some(r#"{"head":"a","base":"b"}"#.to_string())
+        })));
+        let wanted = InfoSelection {
+            checks: false,
+            comments: true,
+        };
+        assert!(open_bundle(&repo, 1, wanted).is_some());
         install_fake_chd(None);
     }
 
@@ -305,7 +399,7 @@ mod tests {
             assert_eq!(args, ["pr-cache", "open", "github.com", "o", "r", "1"]);
             Some(r#"{"head":"a","base":"b"}"#.to_string())
         })));
-        assert!(open_bundle(&repo, 1).is_some());
+        assert!(open_bundle(&repo, 1, InfoSelection::default()).is_some());
         assert!(stashed_files(&pr()).is_none());
         assert!(take_stashed_reviews(&pr()).is_none());
         assert!(stashed_commits(&pr()).is_none());

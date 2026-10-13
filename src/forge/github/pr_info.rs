@@ -199,9 +199,9 @@ impl GhPullRequestInfoResponse {
             review_decision: non_empty(self.review_decision),
             mergeable: non_empty(self.mergeable),
             merge_state: non_empty(self.merge_state_status),
-            requested_reviewers: self.review_requests,
+            requested_reviewers: sorted_requested(self.review_requests),
             latest_reviews: self.latest_reviews,
-            checks: self.status_check_rollup,
+            checks: sorted_checks(self.status_check_rollup),
             issue_comments: self.issue_comments,
         })
     }
@@ -356,6 +356,105 @@ fn status_check_label(check: GhStatusCheck) -> Option<PullRequestCheckStatus> {
     }
 }
 
+/// Stable display order shared by the live and the REST-built paths, since
+/// GraphQL and REST order checks and requested reviewers differently.
+pub(crate) fn sorted_checks(
+    mut checks: Vec<PullRequestCheckStatus>,
+) -> Vec<PullRequestCheckStatus> {
+    checks.sort_by(|a, b| {
+        (&a.name, &a.status, &a.conclusion).cmp(&(&b.name, &b.status, &b.conclusion))
+    });
+    checks
+}
+
+pub(crate) fn sorted_requested(mut labels: Vec<String>) -> Vec<String> {
+    labels.sort();
+    labels
+}
+
+/// GraphQL spells bot logins without the REST `[bot]` suffix.
+fn graphql_login(login: &str) -> String {
+    login.strip_suffix("[bot]").unwrap_or(login).to_string()
+}
+
+fn text(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key)?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn upper(value: Option<String>) -> Option<String> {
+    value.map(|s| s.to_ascii_uppercase())
+}
+
+/// Maps validated REST check runs and combined statuses to the same rows the
+/// GraphQL `statusCheckRollup` yields: enum values upper-cased, nameless rows
+/// dropped, check runs before legacy status contexts. `None` on bad JSON.
+pub(crate) fn checks_from_rest(
+    check_runs: &str,
+    statuses: &str,
+) -> Option<Vec<PullRequestCheckStatus>> {
+    let runs: Vec<serde_json::Value> = serde_json::from_str(check_runs).ok()?;
+    let contexts: Vec<serde_json::Value> = serde_json::from_str(statuses).ok()?;
+    let runs = runs.iter().filter_map(|r| {
+        Some(PullRequestCheckStatus {
+            name: text(r, "name")?,
+            status: upper(text(r, "status")),
+            conclusion: upper(text(r, "conclusion")),
+            url: text(r, "details_url"),
+        })
+    });
+    let contexts = contexts.iter().filter_map(|c| {
+        Some(PullRequestCheckStatus {
+            name: text(c, "context")?,
+            status: None,
+            conclusion: upper(text(c, "state")),
+            url: text(c, "target_url"),
+        })
+    });
+    Some(runs.chain(contexts).collect())
+}
+
+/// Maps validated REST issue comments to the panel's conversation comments.
+pub(crate) fn comments_from_rest(json: &str) -> Option<Vec<PullRequestIssueComment>> {
+    let rows: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    Some(
+        rows.iter()
+            .filter_map(|c| {
+                let body = text(c, "body").filter(|b| !b.trim().is_empty())?;
+                Some(PullRequestIssueComment {
+                    author: c
+                        .get("user")
+                        .and_then(|u| text(u, "login"))
+                        .map(|l| graphql_login(&l)),
+                    body,
+                    url: text(c, "html_url"),
+                    created_at: text(c, "created_at").and_then(|t| t.parse().ok()),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Maps the validated REST requested reviewers (users, then teams) to labels.
+pub(crate) fn requested_from_rest(json: &str) -> Option<Vec<String>> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let users = v.get("users")?.as_array()?;
+    let teams = v.get("teams")?.as_array()?;
+    Some(
+        users
+            .iter()
+            .filter_map(|u| text(u, "login"))
+            .chain(
+                teams
+                    .iter()
+                    .filter_map(|t| text(t, "name").or_else(|| text(t, "slug"))),
+            )
+            .collect(),
+    )
+}
+
 fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|s| !s.is_empty())
 }
@@ -506,6 +605,54 @@ mod tests {
             info.checks[0].url.as_deref(),
             Some("https://github.com/owner/repo/actions/runs/1")
         );
+    }
+
+    #[test]
+    fn rest_checks_map_to_the_graphql_rollup_rows() {
+        let runs = r#"[{"name":"build","status":"completed","conclusion":"success","details_url":"https://x/1"},
+            {"name":"lint","status":"in_progress","conclusion":null,"details_url":""},{"name":"","status":"queued"}]"#;
+        let statuses = r#"[{"context":"atlantis/plan","state":"success","target_url":""}]"#;
+        let checks = checks_from_rest(runs, statuses).unwrap();
+        assert_eq!(checks.len(), 3);
+        assert_eq!(
+            (checks[0].status.as_deref(), checks[0].conclusion.as_deref()),
+            (Some("COMPLETED"), Some("SUCCESS"))
+        );
+        assert_eq!(checks[1].status.as_deref(), Some("IN_PROGRESS"));
+        assert!(checks[1].conclusion.is_none() && checks[1].url.is_none());
+        assert_eq!(
+            (checks[2].name.as_str(), checks[2].conclusion.as_deref()),
+            ("atlantis/plan", Some("SUCCESS"))
+        );
+        assert!(checks_from_rest("nope", "[]").is_none());
+    }
+
+    #[test]
+    fn live_and_rest_checks_render_in_the_same_order() {
+        let rest = checks_from_rest(
+            r#"[{"name":"b","status":"completed","conclusion":"success"},{"name":"a","status":"completed","conclusion":"success"}]"#,
+            r#"[{"context":"a0","state":"success"}]"#,
+        )
+        .unwrap();
+        let graphql_order = vec![rest[2].clone(), rest[0].clone(), rest[1].clone()];
+        let names = |v: Vec<PullRequestCheckStatus>| -> Vec<String> {
+            sorted_checks(v).into_iter().map(|c| c.name).collect()
+        };
+        assert_eq!(names(rest), names(graphql_order));
+        assert_eq!(sorted_requested(vec!["b".into(), "a".into()]), ["a", "b"]);
+    }
+
+    #[test]
+    fn rest_comments_and_requested_reviewers_match_graphql_labels() {
+        let c = r#"[{"user":{"login":"caliber-ai-reviewer[bot]"},"body":"hi","html_url":"https://x/c","created_at":"2026-10-09T18:02:37Z"},
+            {"user":{"login":"a"},"body":"  "},{"user":null,"body":"ghost"}]"#;
+        let comments = comments_from_rest(c).unwrap();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].author.as_deref(), Some("caliber-ai-reviewer"));
+        assert!(comments[0].created_at.is_some() && comments[1].author.is_none());
+        let r = r#"{"users":[{"login":"u"}],"teams":[{"name":"Core","slug":"core"},{"slug":"s"}]}"#;
+        assert_eq!(requested_from_rest(r).unwrap(), ["u", "Core", "s"]);
+        assert!(requested_from_rest(r#"{"users":[]}"#).is_none());
     }
 
     #[test]

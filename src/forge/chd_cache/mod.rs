@@ -9,8 +9,9 @@ mod bundle;
 mod runner;
 
 pub use bundle::{
-    note_consumed, open_bundle, stashed_commits, stashed_files, stashed_merge_base,
-    take_stashed_reviews,
+    InfoParts, InfoSelection, note_consumed, open_bundle, peek_info_parts, stashed_commits,
+    stashed_files, stashed_merge_base, take_stashed_info_parts, take_stashed_reviews,
+    take_stashed_viewer,
 };
 #[cfg(test)]
 pub(crate) use runner::install_fake_chd;
@@ -186,7 +187,7 @@ mod tests {
         let mut p = pr();
         p.head_sha = "a".into();
         p.base_sha = "b".into();
-        let _ = open_bundle(&repo, p.number);
+        let _ = open_bundle(&repo, p.number, InfoSelection::default());
         assert_eq!(
             get_list_sourced(&p, "commits"),
             Some(("[1]".into(), FROM_GET_LIST))
@@ -198,7 +199,7 @@ mod tests {
                 "[1]".to_string()
             })
         })));
-        let _ = open_bundle(&repo, p.number);
+        let _ = open_bundle(&repo, p.number, InfoSelection::default());
         assert_eq!(
             get_list_sourced(&p, "commits"),
             Some(("[2]".into(), FROM_BUNDLE))

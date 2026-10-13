@@ -39,6 +39,14 @@ const PR_INFO_JSON_FIELDS: &str = concat!(
     "reviewDecision,mergeable,mergeStateStatus,reviewRequests,latestReviews,",
     "statusCheckRollup,comments"
 );
+/// Fields without a validated REST equivalent. chd REST supplies `reviewRequests`, the
+/// check rollup and comments; `latestReviews` stays live because REST cannot reproduce
+/// its per-author selection (see docs/CHD_CACHE_COVERAGE.md).
+const PR_INFO_JSON_FIELDS_RESIDUAL: &str = concat!(
+    "number,title,url,state,isDraft,author,headRefName,baseRefName,",
+    "headRefOid,baseRefOid,body,updatedAt,closed,mergedAt,",
+    "reviewDecision,mergeable,mergeStateStatus,latestReviews"
+);
 const PR_INFO_JSON_FIELDS_WITHOUT_CHECKS: &str = concat!(
     "number,title,url,state,isDraft,author,headRefName,baseRefName,",
     "headRefOid,baseRefOid,body,updatedAt,closed,mergedAt,",
@@ -193,6 +201,88 @@ where
         self.local_checkout.as_deref()
     }
 
+    fn pull_request_info_with_fields(
+        &self,
+        target: PullRequestTarget,
+        fields: &str,
+    ) -> Result<PullRequestInfo> {
+        let repository = self.resolve_repository(&target)?;
+        let output = self.run_gh(
+            vec![
+                "pr".to_string(),
+                "view".to_string(),
+                target.number.to_string(),
+                "--repo".to_string(),
+                gh_repo_arg(&repository),
+                "--json".to_string(),
+                fields.to_string(),
+            ],
+            &repository.host,
+        )?;
+        super::pr_info::parse_pull_request_info(&output, &repository)
+    }
+
+    /// Residual-only info for the overlapped open: fields with no validated REST equivalent.
+    fn residual_pull_request_info(&self, target: PullRequestTarget) -> Result<PullRequestInfo> {
+        self.pull_request_info_with_fields(target, PR_INFO_JSON_FIELDS_RESIDUAL)
+    }
+
+    /// Maps the validated REST parts the panel needs; `None` if any is missing or malformed.
+    fn map_info_parts(
+        &self,
+        p: &crate::forge::chd_cache::InfoParts,
+    ) -> Option<(
+        Vec<String>,
+        Vec<crate::forge::traits::PullRequestCheckStatus>,
+        Vec<crate::forge::traits::PullRequestIssueComment>,
+    )> {
+        use super::pr_info::{checks_from_rest, comments_from_rest, requested_from_rest};
+        let requested = requested_from_rest(p.requested.as_deref()?)?;
+        let checks = if self.show_pr_checks {
+            checks_from_rest(p.check_runs.as_deref()?, p.statuses.as_deref()?)?
+        } else {
+            Vec::new()
+        };
+        let comments = if self.show_pr_comments {
+            comments_from_rest(p.issue_comments.as_deref()?)?
+        } else {
+            Vec::new()
+        };
+        Some((requested, checks, comments))
+    }
+
+    /// Whether the stashed bundle for this identity can complete the PR info.
+    fn info_parts_ready(&self, pr: &PullRequestDetails) -> bool {
+        crate::forge::chd_cache::peek_info_parts(pr)
+            .and_then(|parts| self.map_info_parts(&parts))
+            .is_some()
+    }
+
+    /// Fills residual checks, comments and reviewers from the chd bundle if identity
+    /// matches and every part validated; otherwise one full live query, never empty sections.
+    fn complete_pull_request_info(
+        &self,
+        target: PullRequestTarget,
+        mut info: PullRequestInfo,
+    ) -> Result<PullRequestInfo> {
+        let mapped = crate::forge::chd_cache::take_stashed_info_parts(&info.details)
+            .and_then(|parts| self.map_info_parts(&parts));
+        let Some((requested, checks, comments)) = mapped else {
+            return self.get_pull_request_info(target);
+        };
+        crate::forge::chd_cache::note_consumed("info.requested");
+        if self.show_pr_checks {
+            crate::forge::chd_cache::note_consumed("info.checks");
+        }
+        if self.show_pr_comments {
+            crate::forge::chd_cache::note_consumed("info.issue_comments");
+        }
+        info.requested_reviewers = super::pr_info::sorted_requested(requested);
+        info.checks = super::pr_info::sorted_checks(checks);
+        info.issue_comments = comments;
+        Ok(info)
+    }
+
     fn resolve_repository(&self, target: &PullRequestTarget) -> Result<ForgeRepository> {
         target
             .repository
@@ -269,7 +359,13 @@ where
     ) -> Option<crate::forge::traits::PullRequestReviewMetadata> {
         let rows = crate::forge::chd_cache::take_stashed_reviews(pr)?;
         let reviews = parse_rest_reviews(&rows)?;
-        let viewer_login = self.current_viewer(&pr.repository).ok().flatten()?;
+        let viewer_login = match crate::forge::chd_cache::take_stashed_viewer(pr) {
+            Some(login) => {
+                crate::forge::chd_cache::note_consumed("viewer");
+                login
+            }
+            None => self.current_viewer(&pr.repository).ok().flatten()?,
+        };
         crate::forge::chd_cache::note_consumed("reviews");
         Some(crate::forge::traits::PullRequestReviewMetadata {
             viewer_login: Some(viewer_login),
@@ -383,26 +479,13 @@ where
     }
 
     fn get_pull_request_info(&self, target: PullRequestTarget) -> Result<PullRequestInfo> {
-        let repository = self.resolve_repository(&target)?;
-        let output = self.run_gh(
-            vec![
-                "pr".to_string(),
-                "view".to_string(),
-                target.number.to_string(),
-                "--repo".to_string(),
-                gh_repo_arg(&repository),
-                "--json".to_string(),
-                match (self.show_pr_checks, self.show_pr_comments) {
-                    (true, true) => PR_INFO_JSON_FIELDS,
-                    (false, true) => PR_INFO_JSON_FIELDS_WITHOUT_CHECKS,
-                    (true, false) => PR_INFO_JSON_FIELDS_WITHOUT_COMMENTS,
-                    (false, false) => PR_INFO_JSON_FIELDS_WITHOUT_CHECKS_OR_COMMENTS,
-                }
-                .to_string(),
-            ],
-            &repository.host,
-        )?;
-        super::pr_info::parse_pull_request_info(&output, &repository)
+        let fields = match (self.show_pr_checks, self.show_pr_comments) {
+            (true, true) => PR_INFO_JSON_FIELDS,
+            (false, true) => PR_INFO_JSON_FIELDS_WITHOUT_CHECKS,
+            (true, false) => PR_INFO_JSON_FIELDS_WITHOUT_COMMENTS,
+            (false, false) => PR_INFO_JSON_FIELDS_WITHOUT_CHECKS_OR_COMMENTS,
+        };
+        self.pull_request_info_with_fields(target, fields)
     }
 
     fn fetch_pr_data_overlapped(
@@ -415,8 +498,14 @@ where
         let repository = self.resolve_repository(target).ok()?;
         Some(overlapped_open(
             || {
-                let (head_sha, base_sha) =
-                    crate::forge::chd_cache::open_bundle(&repository, target.number)?;
+                let (head_sha, base_sha) = crate::forge::chd_cache::open_bundle(
+                    &repository,
+                    target.number,
+                    crate::forge::chd_cache::InfoSelection {
+                        checks: self.show_pr_checks,
+                        comments: self.show_pr_comments,
+                    },
+                )?;
                 Some(identity_seed(
                     repository.clone(),
                     target.number,
@@ -424,8 +513,11 @@ where
                     base_sha,
                 ))
             },
+            || self.residual_pull_request_info(target.clone()),
             || self.get_pull_request_info(target.clone()),
+            |seed| self.info_parts_ready(seed),
             |details| self.fetch_diff_commits_metadata(details),
+            |info| self.complete_pull_request_info(target.clone(), info),
         ))
     }
 
@@ -1510,19 +1602,35 @@ fn identity_seed(
 fn overlapped_open(
     identity: impl FnOnce() -> Option<PullRequestDetails>,
     info: impl FnOnce() -> Result<crate::forge::traits::PullRequestInfo> + Send,
+    full_info: impl FnOnce() -> Result<crate::forge::traits::PullRequestInfo> + Send,
+    parts_ready: impl FnOnce(&PullRequestDetails) -> bool,
     fetch: impl Fn(PullRequestDetails) -> Result<DiffBundle> + Sync,
+    complete: impl FnOnce(
+        crate::forge::traits::PullRequestInfo,
+    ) -> Result<crate::forge::traits::PullRequestInfo>,
 ) -> Result<crate::forge::pr_open::PrFetchData> {
-    let (info, seed, early) = std::thread::scope(|scope| {
+    let (info, seed, early, full) = std::thread::scope(|scope| {
         let info = scope.spawn(|| crate::profile::time("pr.fetch_info", info));
         let seed = identity();
+        // If the bundle cannot complete the info, start the full query now, not serially.
+        let full = seed
+            .as_ref()
+            .is_none_or(|seed| !parts_ready(seed))
+            .then(|| scope.spawn(|| crate::profile::time("pr.fetch_info_full", full_info)));
         let early = seed.as_ref().map(|seed| {
             crate::profile::time("pr.fetch_diff_commits_metadata_early", || {
                 fetch(seed.clone())
             })
         });
-        (info.join(), seed, early)
+        (info.join(), seed, early, full.map(|f| f.join()))
     });
-    let info = info.map_err(|_| TuicrError::Forge("PR info worker panicked".into()))??;
+    let info = match full {
+        Some(full) => full.map_err(|_| TuicrError::Forge("PR info worker panicked".into()))??,
+        None => {
+            let info = info.map_err(|_| TuicrError::Forge("PR info worker panicked".into()))??;
+            crate::profile::time("pr.complete_info", || complete(info))?
+        }
+    };
     reconcile_overlap(seed.as_ref(), info, early, fetch)
 }
 
@@ -2052,10 +2160,13 @@ mod tests {
         let out = overlapped_open(
             || None,
             || Ok(info("h", "tip")),
+            || Ok(info("h", "tip")),
+            |_| true,
             |_| {
                 calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 Ok(bundle("mb", "serial"))
             },
+            Ok,
         )
         .unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -2072,14 +2183,20 @@ mod tests {
         overlapped_open(
             || Some(seed_details("h", "tip")),
             || Ok(info("h", "tip")),
+            || Ok(info("h", "tip")),
+            |_| true,
             fetch,
+            Ok,
         )
         .unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         overlapped_open(
             || Some(seed_details("h", "tip")),
             || Ok(info("h2", "tip")),
+            || Ok(info("h2", "tip")),
+            |_| true,
             fetch,
+            Ok,
         )
         .unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
@@ -2090,7 +2207,10 @@ mod tests {
         let err = overlapped_open(
             || Some(seed_details("h", "tip")),
             || Err(TuicrError::Forge("boom".into())),
+            || Err(TuicrError::Forge("boom".into())),
+            |_| true,
             |_| Ok(bundle("mb", "x")),
+            Ok,
         );
         assert!(err.is_err());
     }
@@ -3112,6 +3232,124 @@ Match host github-work
         assert!(!details.is_read_only());
     }
 
+    fn stash_info_bundle(open_json: &'static str) {
+        use crate::forge::chd_cache::{install_fake_chd, open_bundle};
+        install_fake_chd(Some(std::rc::Rc::new(move |_| Some(open_json.to_string()))));
+        assert!(
+            open_bundle(
+                &ForgeRepository::github("github.com", "o", "r"),
+                1,
+                crate::forge::chd_cache::InfoSelection::default()
+            )
+            .is_some()
+        );
+        // The fake stays installed (installing resets the stash); each test thread owns it.
+    }
+
+    const FULL_OPEN: &str = r#"{"head":"h","base":"tip","viewer":"me",
+        "check_runs":[{"name":"build","status":"completed","conclusion":"success","details_url":"u"}],
+        "statuses":[{"context":"ci","state":"pending","target_url":""}],
+        "issue_comments":[{"user":{"login":"bot[bot]"},"body":"hello"}],
+        "requested":{"users":[{"login":"alice"}],"teams":[]}}"#;
+
+    #[test]
+    fn complete_info_uses_validated_rest_parts_without_a_live_query() {
+        stash_info_bundle(FULL_OPEN);
+        let backend = GitHubGhBackend::with_runner(Some(repo()), FakeGhRunner::default())
+            .with_pr_checks(true);
+        let out = backend
+            .complete_pull_request_info(parse_pull_request_target("1").unwrap(), info("h", "tip"))
+            .unwrap();
+        assert!(backend.runner.calls.borrow().is_empty());
+        assert_eq!(out.requested_reviewers, ["alice"]);
+        assert_eq!(out.checks.len(), 2);
+        assert_eq!(out.issue_comments[0].author.as_deref(), Some("bot"));
+    }
+
+    #[test]
+    fn complete_info_goes_live_when_a_part_is_missing_or_identity_differs() {
+        let missing = r#"{"head":"h","base":"tip","requested":{"users":[],"teams":[]},
+            "issue_comments":[],"statuses":[]}"#;
+        for (open, head) in [(missing, "h"), (FULL_OPEN, "moved")] {
+            stash_info_bundle(open);
+            let backend = GitHubGhBackend::with_runner(Some(repo()), FakeGhRunner::default())
+                .with_pr_checks(true);
+            backend
+                .complete_pull_request_info(
+                    parse_pull_request_target("1").unwrap(),
+                    info(head, "tip"),
+                )
+                .unwrap();
+            let calls = backend.runner.calls.borrow();
+            assert_eq!(calls.len(), 1, "one full live info query");
+            assert_eq!(
+                calls[0].last().map(String::as_str),
+                Some(PR_INFO_JSON_FIELDS)
+            );
+        }
+    }
+
+    #[test]
+    fn complete_info_never_reuses_parts_across_operations() {
+        stash_info_bundle(FULL_OPEN);
+        let backend = GitHubGhBackend::with_runner(Some(repo()), FakeGhRunner::default())
+            .with_pr_checks(true);
+        let target = || parse_pull_request_target("1").unwrap();
+        backend
+            .complete_pull_request_info(target(), info("h", "tip"))
+            .unwrap();
+        // Parts are consumed once; a second completion must fetch live.
+        backend
+            .complete_pull_request_info(target(), info("h", "tip"))
+            .unwrap();
+        assert_eq!(backend.runner.calls.borrow().len(), 1);
+    }
+
+    #[test]
+    fn disabled_check_rollup_does_not_force_a_live_query_for_missing_checks() {
+        stash_info_bundle(
+            r#"{"head":"h","base":"tip","issue_comments":[],
+            "requested":{"users":[],"teams":[]}}"#,
+        );
+        let backend = GitHubGhBackend::with_runner(Some(repo()), FakeGhRunner::default());
+        assert!(!backend.show_pr_checks);
+        assert!(backend.info_parts_ready(&seed_details("h", "tip")));
+        backend
+            .complete_pull_request_info(parse_pull_request_target("1").unwrap(), info("h", "tip"))
+            .unwrap();
+        assert!(backend.runner.calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn stashed_viewer_skips_the_live_user_lookup() {
+        stash_info_bundle(r#"{"head":"h","base":"tip","viewer":"me","reviews":[]}"#);
+        let backend = GitHubGhBackend::with_runner(Some(repo()), FakeGhRunner::default());
+        let meta = backend
+            .review_metadata_from_validated_pages(&seed_details("h", "tip"))
+            .expect("validated reviews and viewer");
+        assert_eq!(meta.viewer_login.as_deref(), Some("me"));
+        assert!(backend.runner.calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn unready_bundle_starts_the_full_info_query_without_waiting_for_the_residual() {
+        let full_calls = std::sync::atomic::AtomicUsize::new(0);
+        let out = overlapped_open(
+            || Some(seed_details("h", "tip")),
+            || Err(TuicrError::Forge("residual not needed".into())),
+            || {
+                full_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(info("h", "tip"))
+            },
+            |_| false,
+            |_| Ok(bundle("mb", "x")),
+            |_| panic!("complete must not run when the full query supplied the info"),
+        )
+        .unwrap();
+        assert_eq!(full_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(out.0.base_sha, "mb");
+    }
+
     #[test]
     fn can_skip_pull_request_check_rollup() {
         let runner = FakeGhRunner::default();
@@ -3404,7 +3642,12 @@ Match host github-work
         fake_chd(move |args| {
             (args.get(1).map(String::as_str) == Some("open")).then(|| bundle_json(&extra))
         });
-        crate::forge::chd_cache::open_bundle(&repo(), 125).expect("bundle");
+        crate::forge::chd_cache::open_bundle(
+            &repo(),
+            125,
+            crate::forge::chd_cache::InfoSelection::default(),
+        )
+        .expect("bundle");
         let (backend, mut details) = backend_and_details();
         details.head_sha = "a".repeat(40);
         details.base_sha = "b".repeat(40);
