@@ -250,7 +250,29 @@ where
     }
 
     fn pull_request_file_metadata(&self, pr: &PullRequestDetails) -> Result<Vec<FileMetadata>> {
+        if let Some(rows) = crate::forge::chd_cache::stashed_files(pr)
+            && let Ok(rows) = serde_json::from_str::<Vec<GhPullRequestFile>>(&rows)
+            && let Ok(metadata) = rows
+                .into_iter()
+                .map(GhPullRequestFile::into_metadata)
+                .collect::<Result<Vec<_>>>()
+        {
+            return Ok(metadata);
+        }
         self.pull_request_file_metadata_live(pr)
+    }
+
+    fn review_metadata_from_validated_pages(
+        &self,
+        pr: &PullRequestDetails,
+    ) -> Option<crate::forge::traits::PullRequestReviewMetadata> {
+        let rows = crate::forge::chd_cache::take_stashed_reviews(pr)?;
+        let reviews = parse_rest_reviews(&rows)?;
+        let viewer_login = self.current_viewer(&pr.repository).ok().flatten()?;
+        Some(crate::forge::traits::PullRequestReviewMetadata {
+            viewer_login: Some(viewer_login),
+            reviews,
+        })
     }
 
     fn list_pull_request_commits_live(
@@ -392,7 +414,7 @@ where
         Some(overlapped_open(
             || {
                 let (head_sha, base_sha) =
-                    crate::forge::chd_cache::validated_pr_identity(&repository, target.number)?;
+                    crate::forge::chd_cache::open_bundle(&repository, target.number)?;
                 Some(identity_seed(
                     repository.clone(),
                     target.number,
@@ -463,7 +485,10 @@ where
                 .collect());
         }
         let commits = self.list_pull_request_commits_live(pr)?;
-        crate::forge::chd_cache::request_list_fill(pr, "commits");
+        // GitHub truncates PR commit lists at 250; chd can never verify those.
+        if commits_cacheable(commits.len()) {
+            crate::forge::chd_cache::request_list_fill(pr, "commits");
+        }
         Ok(commits)
     }
 
@@ -526,6 +551,10 @@ where
         if let Some(root) = self.local_checkout.as_deref()
             && let Some(sha) = local_merge_base(root, &pr.base_sha, &pr.head_sha)
         {
+            return Some(sha);
+        }
+
+        if let Some(sha) = crate::forge::chd_cache::stashed_merge_base(pr) {
             return Some(sha);
         }
 
@@ -859,6 +888,9 @@ where
         &self,
         pr: &PullRequestDetails,
     ) -> Result<crate::forge::traits::PullRequestReviewMetadata> {
+        if let Some(rest) = self.review_metadata_from_validated_pages(pr) {
+            return Ok(rest);
+        }
         let mut all = crate::forge::traits::PullRequestReviewMetadata::default();
         let mut cursor: Option<String> = None;
         for _ in 0..100 {
@@ -1395,6 +1427,37 @@ where
         crate::forge::chd_cache::request_blob_fill(&request.repository, request.sha(), &path_str);
         Ok(content)
     }
+}
+
+const COMMITS_API_CAP: usize = 250;
+
+/// Maps REST `pulls/N/reviews` rows to GraphQL review records.
+fn parse_rest_reviews(json: &str) -> Option<Vec<crate::forge::traits::PullRequestReviewRecord>> {
+    #[derive(serde::Deserialize)]
+    struct Row {
+        user: Option<RowUser>,
+        submitted_at: Option<chrono::DateTime<chrono::Utc>>,
+        commit_id: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RowUser {
+        login: Option<String>,
+    }
+    let rows: Vec<Row> = serde_json::from_str(json).ok()?;
+    Some(
+        rows.into_iter()
+            .map(|r| crate::forge::traits::PullRequestReviewRecord {
+                author: r.user.and_then(|u| u.login),
+                submitted_at: r.submitted_at,
+                commit_oid: r.commit_id,
+            })
+            .collect(),
+    )
+}
+
+/// Returns false if the commit list reached GitHub's cap and cannot be verified.
+fn commits_cacheable(len: usize) -> bool {
+    len < COMMITS_API_CAP
 }
 
 type DiffBundle = (
@@ -3257,6 +3320,160 @@ Match host github-work
             .expect("expected a reviews graphql call");
         assert!(summaries_call.iter().any(|a| a == "owner=agavra"));
         assert!(summaries_call.iter().any(|a| a == "number=125"));
+    }
+
+    type ChdCalls = std::rc::Rc<std::cell::RefCell<Vec<Vec<String>>>>;
+
+    fn fake_chd(answer: impl Fn(&[String]) -> Option<String> + 'static) -> ChdCalls {
+        let calls: ChdCalls = Default::default();
+        let log = calls.clone();
+        crate::forge::chd_cache::install_fake_chd(Some(std::rc::Rc::new(move |args| {
+            log.borrow_mut().push(args.to_vec());
+            answer(args)
+        })));
+        calls
+    }
+
+    fn backend_and_details() -> (GitHubGhBackend<FakeGhRunner>, PullRequestDetails) {
+        let backend = GitHubGhBackend::with_runner(Some(repo()), FakeGhRunner::default());
+        let details = backend
+            .get_pull_request(parse_pull_request_target("125").unwrap())
+            .unwrap();
+        backend.runner.calls.borrow_mut().clear();
+        (backend, details)
+    }
+
+    fn ran_gh(backend: &GitHubGhBackend<FakeGhRunner>, needle: &str) -> bool {
+        backend
+            .runner
+            .calls
+            .borrow()
+            .iter()
+            .any(|a| a.iter().any(|x| x.contains(needle)))
+    }
+
+    #[test]
+    fn commits_use_cached_list_and_live_miss_requests_fill() {
+        let calls = fake_chd(|args| {
+            (args.get(1).map(String::as_str) == Some("get-list"))
+                .then(|| PR_COMMITS_JSON.to_string())
+        });
+        let (backend, details) = backend_and_details();
+        let hit = backend.list_pull_request_commits(&details).unwrap();
+        assert!(!hit.is_empty());
+        assert!(!ran_gh(&backend, "/commits"));
+        crate::forge::chd_cache::install_fake_chd(None);
+        drop(calls);
+
+        let calls = fake_chd(|_| None);
+        let live = backend.list_pull_request_commits(&details).unwrap();
+        crate::forge::chd_cache::install_fake_chd(None);
+        assert_eq!(live.len(), hit.len());
+        assert!(ran_gh(&backend, "/commits"));
+        assert!(
+            calls
+                .borrow()
+                .iter()
+                .any(|a| a.get(1).map(String::as_str) == Some("fill-list"))
+        );
+    }
+
+    #[test]
+    fn oversized_commit_lists_are_not_cacheable() {
+        assert!(commits_cacheable(249));
+        assert!(!commits_cacheable(250));
+    }
+
+    fn bundle_json(extra: &str) -> String {
+        format!(
+            r#"{{"head":"{}","base":"{}"{extra}}}"#,
+            "a".repeat(40),
+            "b".repeat(40)
+        )
+    }
+
+    fn open_with(extra: String) -> (GitHubGhBackend<FakeGhRunner>, PullRequestDetails) {
+        fake_chd(move |args| {
+            (args.get(1).map(String::as_str) == Some("open")).then(|| bundle_json(&extra))
+        });
+        crate::forge::chd_cache::open_bundle(&repo(), 125).expect("bundle");
+        let (backend, mut details) = backend_and_details();
+        details.head_sha = "a".repeat(40);
+        details.base_sha = "b".repeat(40);
+        (backend, details)
+    }
+
+    #[test]
+    fn files_come_from_validated_bundle_without_a_live_call() {
+        let (backend, details) = open_with(format!(r#","files":{}"#, PR_FILES_JSON));
+        let metadata = backend.pull_request_file_metadata(&details).unwrap();
+        crate::forge::chd_cache::install_fake_chd(None);
+        assert!(!metadata.is_empty());
+        assert!(!ran_gh(&backend, "/files"));
+    }
+
+    #[test]
+    fn files_go_live_when_bundle_lacks_them_or_identity_moved() {
+        let (backend, details) = open_with(String::new());
+        assert!(
+            !backend
+                .pull_request_file_metadata(&details)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(ran_gh(&backend, "/files"));
+        backend.runner.calls.borrow_mut().clear();
+        let (backend2, mut moved) = open_with(format!(r#","files":{}"#, PR_FILES_JSON));
+        moved.head_sha = "f".repeat(40);
+        assert!(
+            !backend2
+                .pull_request_file_metadata(&moved)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(ran_gh(&backend2, "/files"));
+        crate::forge::chd_cache::install_fake_chd(None);
+    }
+
+    #[test]
+    fn review_metadata_uses_validated_bundle_reviews_and_rest_viewer() {
+        let (backend, details) = open_with(
+            r#","reviews":[{"user":{"login":"alice"},"submitted_at":"2026-01-02T03:04:05Z","commit_id":"abc"},{"user":null,"submitted_at":null,"commit_id":null}]"#
+                .to_string(),
+        );
+        let metadata = backend.list_pull_request_review_metadata(&details).unwrap();
+        crate::forge::chd_cache::install_fake_chd(None);
+        assert_eq!(metadata.viewer_login.as_deref(), Some("reviewer"));
+        assert_eq!(metadata.reviews.len(), 2);
+        assert_eq!(metadata.reviews[0].author.as_deref(), Some("alice"));
+        assert_eq!(metadata.reviews[0].commit_oid.as_deref(), Some("abc"));
+        assert!(metadata.reviews[1].author.is_none());
+        assert!(!ran_gh(&backend, "graphql"));
+    }
+
+    #[test]
+    fn review_metadata_falls_back_to_graphql_without_validated_reviews() {
+        let (backend, details) = open_with(String::new());
+        let metadata = backend.list_pull_request_review_metadata(&details).unwrap();
+        crate::forge::chd_cache::install_fake_chd(None);
+        assert_eq!(metadata.viewer_login.as_deref(), Some("ronen-hoffer"));
+        assert!(ran_gh(&backend, "graphql"));
+    }
+
+    #[test]
+    fn merge_base_and_commits_come_from_the_bundle_by_oids() {
+        let want = "c".repeat(40);
+        let (backend, details) = open_with(format!(
+            r#","merge_base":"{want}","commits":{}"#,
+            PR_COMMITS_JSON
+        ));
+        let got = backend.resolve_diff_base_sha(&details);
+        let commits = backend.list_pull_request_commits(&details).unwrap();
+        crate::forge::chd_cache::install_fake_chd(None);
+        assert_eq!(got, Some(want));
+        assert!(!commits.is_empty());
+        assert!(!ran_gh(&backend, "/compare/"));
+        assert!(!ran_gh(&backend, "/commits"));
     }
 
     #[test]

@@ -62,7 +62,10 @@ src/
 │   │                    # CreateReviewRequest, GhCreateReviewResponse, ForgeFileLinesRequest
 │   ├── pr_open.rs       # Async pr-open flow: build session from details + diff
 │   ├── selector.rs      # Review target selector state (Local | Pull Requests tabs)
-│   ├── chd_cache.rs     # Optional chd-owned PR diff cache client (`chd pr-cache`)
+│   ├── chd_cache/       # Optional chd-owned PR cache client (`chd pr-cache`)
+│   │   ├── mod.rs       # Diff/blob/list cache lookups and fill requests
+│   │   ├── runner.rs    # `chd` process runner, timeouts, availability gate and cooldown
+│   │   └── bundle.rs    # Open bundle stash keyed by (repo, PR, head, base tip) and open generation
 │   ├── context.rs       # Remote context expansion via ForgeBackend::fetch_file_lines
 │   ├── local_git.rs     # Shared `git show <sha>:<path>` blob read for all backends
 │   ├── remote_comments.rs # RemoteReviewThread shape + visibility filter
@@ -368,8 +371,8 @@ These are non-obvious things the implementation chain hit. Worth preserving for 
 
 ### chd PR cache
 
-`forge/chd_cache.rs` talks to `chd pr-cache`. chd owns the cache files. tuicr never writes them or supplies cache
-bytes. tuicr requests only `fill-diff` and `fill-blob`, and chd fetches SHA-pinned content itself, keyed per
+`forge/chd_cache/` talks to `chd pr-cache`. chd owns the cache files. tuicr never writes them or supplies cache
+bytes. tuicr requests only `fill-diff`, `fill-blob` and `fill-list`, and chd fetches SHA-pinned content itself, keyed per
 credential. Fill requests run in the background and are deduplicated. tuicr caps them at four in flight, and every chd
 call has a timeout.
 
@@ -379,13 +382,17 @@ fill. `fetch_file_via_api` reads immutable revision blobs keyed by commit SHA. C
 timestamps do not guarantee freshness. If chd is absent, misses, errors, or times out, tuicr fetches live. With `TUICR_PROFILE`, `pr.diff_cache_lookup` (hit/miss), `pr.diff_cache_pair` (accepted/rejected) and `pr.diff_live_fetch` spans show cache outcomes.
 `TUICR_CHD_CACHE=0` disables the cache.
 
-PR open overlap: `ForgeBackend::fetch_pr_data_overlapped` (GitHub only) asks chd to ETag-revalidate REST `pulls/N` (`chd pr-cache revalidate … pr`). A 304 proves the cached body current; failure means no overlap. The validated head and base tip seed the diff, commits and review-metadata fetches, which run in parallel with the live GraphQL PR info. They are kept only if the info reports the same head and base; otherwise `reconcile_overlap` refetches serially, so a force push or retarget visible by then never pairs data with another revision. A push landing while uncached commits, files or diff fetches are in flight is a window the serial path shares, narrowed but not closed.
+PR open overlap: `ForgeBackend::fetch_pr_data_overlapped` (GitHub only) runs one `chd pr-cache open` process (one credential, parallel work inside) while the live GraphQL PR info fetch runs. chd ETag-revalidates REST `pulls/N` (a 304 proves the cached body current; failure means no overlap) and returns its head and base tip, plus whatever else it could validate: the PR `files` and `reviews` collections, the merge base, and any cached commit list. tuicr stashes that bundle and seeds the diff, commits and review-metadata fetches from it. The seeded results are kept only if the live info reports the same head and base; otherwise `reconcile_overlap` refetches serially, so a force push or retarget visible by then never pairs data with another revision. A push landing while uncached fetches are in flight is a window the serial path shares, narrowed but not closed.
 
-Spans `pr.chd_revalidate_pr` and `pr.fetch_diff_commits_metadata_early` show the overlap. Measured on PR 185: `app_init` ~3.0–6.7s with `TUICR_CHD_CACHE=0` vs ~1.7–2.2s with it.
+Collections (`files`, `reviews`) are validated per page: chd sends each page's own ETag, asks for page N+1 whenever page N is full, drops deleted trailing pages, and fails (so tuicr goes live) if any page cannot be validated, because a first-page 304 never proves later pages. Pages are validated one after another, so this is not an atomic snapshot; it is exactly as exposed to mid-pass changes as a live paged fetch. The stashed bundle only serves the identical (repository, number, head, base tip); `reviews` are mutable and handed out once, and every open clears the previous stash. REST `reviews` map to the GraphQL fields tuicr reads (`user.login`, `submitted_at`, `commit_id`); the viewer login still comes from `gh api user`.
 
-PR `commits` are a pure function of (head, base tip). chd stores them keyed by that pair (`get-list`/`fill-list`, all 100-row pages), writing only if the `pulls/N` identity validated before and after its page fetch equals the key and the rows equal the SHA-addressed `compare/tip...head` commit list. A moved head or retargeted base is a different key, so no age or ETag is needed. tuicr requests lists with the validated pair as key; a refined merge-base key misses.
+Failure bounds: chd reads time out after 3s (the open bundle after 8s), and a timeout puts chd into a 30-second cooldown (not a permanent disable), so a slow chd costs at most one timeout per cooldown before the live path. Spans `pr.chd_open_bundle`, `pr.fetch_diff_commits_metadata_early` and `pr.diff_cache_*` show the cache outcomes.
 
-Always live: the `files` list (no SHA-addressed endpoint reproduces its rows and order; `compare` caps at 300 files), GraphQL PR info, checks and threads (resolved state exists only in GraphQL), review metadata (GraphQL reviews), and the merge-base lookup.
+PR `commits` are a pure function of (head, base tip). chd stores them keyed by that pair (`get-list`/`fill-list`, all 100-row pages), writing only if the `pulls/N` identity validated before and after its page fetch equals the key and the rows equal the SHA-addressed `compare/tip...head` commit list. A moved head or retargeted base is a different key, so no age or ETag is needed. Lists of 250 or more commits are never filled, since GitHub truncates them. The merge base is cached by its immutable head and base-tip OIDs.
+
+Always live: GraphQL PR info and checks (the REST check-runs and combined statuses do not reproduce `statusCheckRollup`), review threads (resolved state exists only in GraphQL), review summaries, the viewer login, and file or revision content on a cache miss.
+
+Freshness limits: cached or bundled parts are validated individually, not as one atomic snapshot, so a PR can change between the validations of two parts or between the bundle and the live fetches. The head and base comparison in `reconcile_overlap` catches a moved head or retarget, but not changes that leave both unchanged, such as a new review or a comment edit. A force push that lands during uncached fetches is also not detected.
 
 Each daemon cycle chd prewarms diffs, blobs, and ETag-validated `pr`, `comments`, and `reviews` metadata for
 review-requested PRs, then garbage-collects old files. Its `revalidate` command returns server-validated metadata using
