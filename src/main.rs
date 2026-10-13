@@ -225,7 +225,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     // Live gh/chd timing on stderr while the blocking startup work runs.
-    let mut startup_display = tuicr::startup_trace::StartupDisplay::start_if_interactive();
+    let mut startup_display = tuicr::startup_trace::StartupDisplay::start_for_startup();
     let app_result = profile::time("startup.app_init", || {
         App::new(
             theme,
@@ -259,9 +259,7 @@ fn main() -> anyhow::Result<()> {
             },
         )
     });
-    if let Some(display) = startup_display.as_mut() {
-        display.stop();
-    }
+    startup_display.stop();
     let mut app = match app_result {
         Ok(mut app) => {
             app.supports_keyboard_enhancement = keyboard_enhancement_supported;

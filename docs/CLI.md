@@ -152,25 +152,37 @@ either way, but only when `TUICR_PROFILE` is enabled.
 
 ### Startup command timing
 
-When stdin and stderr are terminals, a startup longer than about 250 ms shows
-a live timing block on stderr before the review screen. The block displays
-total startup time, then each `gh` and `chd` command with its ID, sanitized
-label, and elapsed time (`running`) or final state (`ok`, `error`, `timeout`,
-`not found`, `cancelled`). Parallel commands show individual durations, not a
-sum. Header and field values, stdin payloads, tokens, and free text appear as
-`<redacted>`.
+While tuicr starts, every `gh` and `chd` command it runs is timed. When
+stdin and stderr are terminals and startup lasts more than about 250 ms, a
+live block on stderr shows total startup time and running commands. Each
+command displays its ID, sanitized label, and elapsed time (`running`) or
+final state (`ok`, `error`, `timeout`, `not found`, `cancelled`). Parallel
+commands show individual durations, not a sum. Header and field values, stdin
+payloads, tokens, and free text appear as `<redacted>`.
 
-The block is erased before the TUI starts, on error exit, and on panic. On
-Unix it is also erased on Ctrl-C, SIGTERM, or SIGHUP, except for signals
-already ignored at launch (such as under `nohup`). Below 30 columns, tuicr
-shows only the total line. The block never appears when stdin or stderr is not
-a terminal or when `TERM=dumb`, and it never writes to stdout. Only command
+Before the review screen opens, the live block is replaced by a durable
+summary on stderr, so it stays in terminal scrollback after exit:
+
+```text
+tuicr startup: 1.7s
+  #1 chd pr-cache open github.com o r 185  [ok 1.4s]
+  #2 gh pr view 185 --repo o/r --json <redacted>  [ok 0.9s]
+```
+
+The summary is plain text, printed once, and never erased. A command still
+running when it prints is marked `unfinished`. The summary also prints on
+error exit, panic, and, on Unix, Ctrl-C, SIGTERM, or SIGHUP (except signals
+already ignored at launch, such as under `nohup`). It prints to stderr even
+when stderr is redirected to a file or pipe, without redraw escape codes, so
+scripts that capture stderr see these lines. tuicr never writes to stdout.
+Startups that run no `gh` or `chd` command print nothing. Only command
 boundaries are timed, not the HTTP requests inside `chd`.
 
 ## Output for scripts and agents
 
-Two markers go to **stderr**, so they survive on the user's scrollback and stay
-out of piped output:
+Two session markers go to **stderr** (after the startup timing summary
+above), so they survive on the user's scrollback and stay out of piped
+output:
 
 ```
 tuicr-session: agavra/tuicr@main/worktree

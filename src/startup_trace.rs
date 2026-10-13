@@ -22,6 +22,8 @@ pub enum Outcome {
     Timeout,
     NotFound,
     Cancelled,
+    /// Still running when the summary was printed.
+    Unfinished,
 }
 
 impl Outcome {
@@ -32,6 +34,7 @@ impl Outcome {
             Outcome::Timeout => "timeout",
             Outcome::NotFound => "not found",
             Outcome::Cancelled => "cancelled",
+            Outcome::Unfinished => "unfinished",
         }
     }
 }
@@ -138,6 +141,35 @@ impl Tracker {
             lines.push(format!("{prefix}{}{suffix}", fit(e.label.clone(), room)));
         }
         lines
+    }
+}
+
+impl Tracker {
+    /// Durable end-of-startup summary: total time and every command with its
+    /// own duration and status. Commands still running are marked `unfinished`.
+    /// Never truncated, so scrollback keeps the full sanitized label.
+    pub fn summary(&self) -> Vec<String> {
+        let now = (self.clock)();
+        let mut entries = self.lock();
+        for e in entries.iter_mut().filter(|e| e.finished.is_none()) {
+            e.finished = Some((now, Outcome::Unfinished));
+        }
+        let mut lines = vec![format!("tuicr startup: {}", fmt_duration(self.elapsed()))];
+        for e in entries.iter() {
+            let (end, outcome) = e.finished.expect("all entries finished above");
+            lines.push(format!(
+                "  #{} {}  [{} {}]",
+                e.id,
+                e.label,
+                outcome.text(),
+                fmt_duration(end.saturating_sub(e.started))
+            ));
+        }
+        lines
+    }
+
+    fn has_commands(&self) -> bool {
+        !self.lock().is_empty()
     }
 }
 
@@ -281,10 +313,6 @@ pub(crate) fn install_for_test(tracker: Option<Arc<Tracker>>) {
 static DRAWN: Mutex<usize> = Mutex::new(0);
 static STOP: AtomicBool = AtomicBool::new(false);
 
-fn erase_and_draw<W: Write>(out: &mut W, lines: &[String]) {
-    draw_block(out, lines, false);
-}
-
 /// Draws under lock; with `respect_stop`, skips if a stop already ran.
 fn draw_block<W: Write>(out: &mut W, lines: &[String], respect_stop: bool) {
     let mut drawn = DRAWN.lock().unwrap_or_else(|e| e.into_inner());
@@ -305,21 +333,38 @@ fn draw_block<W: Write>(out: &mut W, lines: &[String], respect_stop: bool) {
     let _ = out.flush();
 }
 
-/// Erase the block if a display is active; safe from a panic hook.
+/// Finalize the display (panic hook, signals): see `finalize_to`.
 pub fn emergency_stop() {
-    emergency_stop_to(&mut std::io::stderr());
+    finalize_to(&mut std::io::stderr());
 }
 
-fn emergency_stop_to<W: Write>(out: &mut W) {
-    if active().is_none() {
-        return;
-    }
+/// Replace the live block with the durable summary, exactly once.
+///
+/// The summary is plain text ending in a newline and is never erased, so it
+/// stays in terminal scrollback after the TUI exits. Silent when no `gh` or
+/// `chd` command ran or when already finalized.
+fn finalize_to<W: Write>(out: &mut W) {
+    let mut drawn = DRAWN.lock().unwrap_or_else(|e| e.into_inner());
     STOP.store(true, Ordering::SeqCst);
-    erase_and_draw(out, &[]);
-    *ACTIVE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let Some(tracker) = ACTIVE.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+        return;
+    };
+    let mut buf = String::new();
+    if *drawn > 0 {
+        buf.push_str(&format!("\x1b[{}A\r\x1b[J", *drawn));
+    }
+    *drawn = 0;
+    if tracker.has_commands() {
+        for line in tracker.summary() {
+            buf.push_str(&line);
+            buf.push('\n');
+        }
+    }
+    let _ = out.write_all(buf.as_bytes());
+    let _ = out.flush();
 }
 
-/// Erases the display on SIGINT/SIGTERM/SIGHUP and triggers default action.
+/// Prints the summary on SIGINT/SIGTERM/SIGHUP and triggers default action.
 /// Installed once for process lifetime on a thread, not in the signal handler.
 #[cfg(unix)]
 fn install_signal_eraser() {
@@ -354,22 +399,22 @@ fn is_ignored(signal: i32) -> bool {
     }
 }
 
-/// Running startup display; stops (erasing itself) on `stop` or drop.
+/// Startup timing display; `stop` or drop prints the durable summary.
 pub struct StartupDisplay {
     handle: Option<JoinHandle<()>>,
+    stopped: bool,
 }
 
 impl StartupDisplay {
-    /// Start only when stderr and stdin are terminals and `TERM` is capable.
-    pub fn start_if_interactive() -> Option<Self> {
+    /// Always track; redraw live only when stderr and stdin are terminals and
+    /// `TERM` is capable. Other stderr gets just the final summary.
+    pub fn start_for_startup() -> Self {
         let capable = std::env::var("TERM").map(|t| t != "dumb").unwrap_or(false);
-        if !(std::io::stderr().is_terminal() && std::io::stdin().is_terminal() && capable) {
-            return None;
-        }
-        Some(Self::start())
+        let live = std::io::stderr().is_terminal() && std::io::stdin().is_terminal() && capable;
+        Self::begin(live)
     }
 
-    fn start() -> Self {
+    fn begin(live: bool) -> Self {
         static ORIGIN: OnceLock<Instant> = OnceLock::new();
         let origin = *ORIGIN.get_or_init(Instant::now);
         let tracker = Tracker::new(Arc::new(move || origin.elapsed()));
@@ -377,6 +422,12 @@ impl StartupDisplay {
         *ACTIVE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::clone(&tracker));
         #[cfg(unix)]
         install_signal_eraser();
+        if !live {
+            return Self {
+                handle: None,
+                stopped: false,
+            };
+        }
         let handle = std::thread::spawn(move || {
             let mut err = std::io::stderr();
             while !STOP.load(Ordering::SeqCst) {
@@ -394,18 +445,19 @@ impl StartupDisplay {
         });
         Self {
             handle: Some(handle),
+            stopped: false,
         }
     }
 
     pub fn stop(&mut self) {
-        let Some(handle) = self.handle.take() else {
+        if std::mem::replace(&mut self.stopped, true) {
             return;
-        };
+        }
         STOP.store(true, Ordering::SeqCst);
-        let _ = handle.join();
-        *ACTIVE.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        let mut err = std::io::stderr();
-        erase_and_draw(&mut err, &[]);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        finalize_to(&mut std::io::stderr());
     }
 }
 
@@ -564,7 +616,14 @@ mod tests {
         if std::env::var("TUICR_SIGNAL_CHILD").is_err() {
             return;
         }
-        let mut display = StartupDisplay::start();
+        let mut display = StartupDisplay::begin(false);
+        if std::env::var("TUICR_SIGNAL_CHILD").as_deref() == Ok("summary") {
+            let _guard = begin_command("gh", &args(&["pr", "view", "7"]));
+            println!("READY");
+            let _ = std::io::stdout().flush();
+            std::thread::sleep(Duration::from_secs(10));
+            return;
+        }
         display.stop();
         println!("READY");
         let _ = std::io::stdout().flush();
@@ -589,6 +648,49 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         };
         assert_eq!(status.signal(), Some(15));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sigterm_during_startup_persists_summary_on_stderr() {
+        use std::io::Read;
+        let exe = std::env::current_exe().unwrap();
+        let mut child = ChildGuard(
+            std::process::Command::new(exe)
+                .args([
+                    "--exact",
+                    "startup_trace::tests::signal_child_entry",
+                    "--nocapture",
+                ])
+                .env("TUICR_SIGNAL_CHILD", "summary")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let mut stdout = child.0.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut seen = String::new();
+            let mut byte = [0u8; 1];
+            while !seen.contains("READY") && matches!(stdout.read(&mut byte), Ok(1)) {
+                seen.push(byte[0] as char);
+            }
+            let _ = tx.send(seen.contains("READY"));
+        });
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(true));
+        kill_signal(&child, "TERM");
+        let mut err = String::new();
+        child
+            .0
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut err)
+            .unwrap();
+        assert!(err.contains("tuicr startup:"), "{err:?}");
+        assert!(err.contains("#1 gh pr view 7  [unfinished"), "{err:?}");
+        assert!(!err.contains("\x1b"), "no escapes on non-tty: {err:?}");
     }
 
     #[cfg(unix)]
@@ -657,14 +759,55 @@ mod tests {
     }
 
     #[test]
-    fn draw_and_erase_emit_cursor_sequences() {
+    fn finalize_replaces_live_block_with_durable_summary_once() {
         let _serial = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (ms, t) = fake();
+        install_for_test(Some(Arc::clone(&t)));
+        let done = t.begin("gh pr view 1 --json <redacted>".into());
+        ms.store(1500, Ordering::SeqCst);
+        done.finish(Outcome::Ok);
+        let _running = t.begin("chd pr-cache open".into());
+        ms.store(2000, Ordering::SeqCst);
         let mut out = Vec::new();
-        erase_and_draw(&mut out, &["a".into(), "b".into()]);
-        erase_and_draw(&mut out, &[]);
-        let s = String::from_utf8(out).unwrap();
-        assert!(s.contains("\x1b[2A") && s.ends_with("\x1b[J"));
+        draw_block(&mut out, &t.render(10, 100), false);
+        let mut out2 = Vec::new();
+        finalize_to(&mut out2);
+        let s = String::from_utf8(out2).unwrap();
+        let body = s
+            .strip_prefix("\x1b[3A\r\x1b[J")
+            .unwrap_or_else(|| panic!("erases live block: {s:?}"));
+        assert!(s.contains("tuicr startup: 2.0s\n"));
+        assert!(s.contains("#1 gh pr view 1 --json <redacted>  [ok 1.5s]\n"));
+        assert!(s.contains("#2 chd pr-cache open  [unfinished 0.5s]\n"));
+        assert!(s.ends_with('\n'), "no trailing erase");
+        assert!(!body.contains('\x1b'), "summary has no escapes");
+        let mut again = Vec::new();
+        finalize_to(&mut again);
+        assert!(again.is_empty(), "no duplicate summary");
         assert_eq!(*DRAWN.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn non_live_summary_has_no_escape_sequences() {
+        let _serial = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (_ms, t) = fake();
+        install_for_test(Some(Arc::clone(&t)));
+        t.begin("gh api user".into()).finish(Outcome::NotFound);
+        let mut out = Vec::new();
+        finalize_to(&mut out);
+        let s = String::from_utf8(out).unwrap();
+        assert!(!s.contains('\x1b'));
+        assert!(s.contains("gh api user  [not found 0.0s]"));
+    }
+
+    #[test]
+    fn no_commands_means_no_output() {
+        let _serial = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (_ms, t) = fake();
+        install_for_test(Some(t));
+        let mut out = Vec::new();
+        finalize_to(&mut out);
+        assert!(out.is_empty());
     }
 
     #[test]
@@ -692,9 +835,9 @@ mod tests {
         install_for_test(Some(t));
         assert!(begin_command("gh", &[]).is_some());
         let mut sink = Vec::new();
-        emergency_stop_to(&mut sink);
+        finalize_to(&mut sink);
         assert!(begin_command("gh", &[]).is_none());
-        emergency_stop_to(&mut sink);
+        finalize_to(&mut sink);
         assert_eq!(*DRAWN.lock().unwrap(), 0);
     }
 }
