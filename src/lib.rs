@@ -16,6 +16,7 @@ pub mod profile;
 pub mod review_cli;
 pub mod review_store;
 pub mod slug;
+pub mod startup_trace;
 pub mod syntax;
 pub mod terminal_state;
 pub mod text_edit;

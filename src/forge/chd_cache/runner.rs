@@ -80,13 +80,30 @@ pub(super) fn run_chd(
 }
 
 fn run_program(program: &str, args: &[String], timeout: Duration) -> Option<String> {
-    let mut child = Command::new(program)
+    let guard = crate::startup_trace::begin_command(program, args);
+    let finish = |outcome| {
+        if let Some(guard) = guard {
+            guard.finish(outcome);
+        }
+    };
+    use crate::startup_trace::Outcome;
+    let spawned = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(err) => {
+            finish(if err.kind() == std::io::ErrorKind::NotFound {
+                Outcome::NotFound
+            } else {
+                Outcome::Error
+            });
+            return None;
+        }
+    };
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
@@ -105,11 +122,21 @@ fn run_program(program: &str, args: &[String], timeout: Duration) -> Option<Stri
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = reader.join();
+                finish(if other.is_ok() {
+                    Outcome::Timeout
+                } else {
+                    Outcome::Error
+                });
                 return None;
             }
         }
     };
     let bytes = reader.join().ok()?;
+    finish(if status.success() {
+        Outcome::Ok
+    } else {
+        Outcome::Error
+    });
     status
         .success()
         .then(|| String::from_utf8_lossy(&bytes).into_owned())

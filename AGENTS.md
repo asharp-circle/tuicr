@@ -27,6 +27,7 @@ src/
 ├── editor.rs            # External $EDITOR command construction and launch helpers
 ├── review_store.rs      # Library API for session listing/loading and shared comment insertion
 ├── review_cli.rs        # Non-interactive `tuicr review` subcommands over ReviewStore
+├── startup_trace.rs     # Live stderr timing block for gh/chd commands during blocking startup
 ├── update.rs            # Public update facade
 ├── update/
 │   ├── check.rs         # Lightweight crates.io version checks for the TUI badge

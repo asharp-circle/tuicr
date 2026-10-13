@@ -62,6 +62,7 @@ fn main() -> anyhow::Result<()> {
     // Setup panic hook to restore terminal on panic
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
+        tuicr::startup_trace::emergency_stop();
         tuicr::terminal_state::restore_stdio_best_effort();
         original_hook(panic_info);
     }));
@@ -223,7 +224,9 @@ fn main() -> anyhow::Result<()> {
         _ => None,
     };
 
-    let mut app = match profile::time("startup.app_init", || {
+    // Live gh/chd timing on stderr while the blocking startup work runs.
+    let mut startup_display = tuicr::startup_trace::StartupDisplay::start_if_interactive();
+    let app_result = profile::time("startup.app_init", || {
         App::new(
             theme,
             config_outcome
@@ -255,7 +258,11 @@ fn main() -> anyhow::Result<()> {
                 repo_url_override,
             },
         )
-    }) {
+    });
+    if let Some(display) = startup_display.as_mut() {
+        display.stop();
+    }
+    let mut app = match app_result {
         Ok(mut app) => {
             app.supports_keyboard_enhancement = keyboard_enhancement_supported;
             startup_warnings.extend(app.vcs.startup_warnings());

@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::startup_trace::{Guard, Outcome};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandOutputErrorKind {
     NotFound,
@@ -28,6 +30,18 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    let args: Vec<_> = args.into_iter().collect();
+    let guard = trace_begin(program, &args);
+    let result = run_command_output_inner(program, current_dir, &args);
+    trace_end(guard, result.as_ref().map(|_| ()));
+    result
+}
+
+fn run_command_output_inner<S: AsRef<OsStr>>(
+    program: &str,
+    current_dir: Option<&Path>,
+    args: &[S],
+) -> CommandOutputResult<String> {
     let mut command = Command::new(program);
     if let Some(current_dir) = current_dir {
         command.current_dir(current_dir);
@@ -86,6 +100,19 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    let args: Vec<_> = args.into_iter().collect();
+    let guard = trace_begin(program, &args);
+    let result = run_command_output_with_stdin_inner(program, current_dir, &args, stdin);
+    trace_end(guard, result.as_ref().map(|_| ()));
+    result
+}
+
+fn run_command_output_with_stdin_inner<S: AsRef<OsStr>>(
+    program: &str,
+    current_dir: Option<&Path>,
+    args: &[S],
+    stdin: &str,
+) -> CommandOutputResult<String> {
     let mut command = Command::new(program);
     if let Some(current_dir) = current_dir {
         command.current_dir(current_dir);
@@ -173,6 +200,24 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    let args: Vec<_> = args.into_iter().collect();
+    let guard = trace_begin(program, &args);
+    let result = run_command_streams_inner(program, current_dir, &args, stdin);
+    let traced = match &result {
+        Ok(streams) if streams.status != Some(0) => Err(CommandOutputErrorKind::Unsuccessful),
+        Ok(_) => Ok(()),
+        Err(err) => Err(err.kind),
+    };
+    finish_trace(guard, traced);
+    result
+}
+
+fn run_command_streams_inner<S: AsRef<OsStr>>(
+    program: &str,
+    current_dir: Option<&Path>,
+    args: &[S],
+    stdin: Option<&str>,
+) -> CommandOutputResult<CommandStreams> {
     let mut command = Command::new(program);
     if let Some(current_dir) = current_dir {
         command.current_dir(current_dir);
@@ -224,4 +269,29 @@ where
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         status: output.status.code(),
     })
+}
+
+fn trace_begin<S: AsRef<OsStr>>(program: &str, args: &[S]) -> Option<Guard> {
+    if !crate::startup_trace::is_traced_program(program) {
+        return None;
+    }
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.as_ref().to_string_lossy().into_owned())
+        .collect();
+    crate::startup_trace::begin_command(program, &args)
+}
+
+fn trace_end(guard: Option<Guard>, result: Result<(), &CommandOutputError>) {
+    finish_trace(guard, result.map_err(|err| err.kind));
+}
+
+fn finish_trace(guard: Option<Guard>, result: Result<(), CommandOutputErrorKind>) {
+    if let Some(guard) = guard {
+        guard.finish(match result {
+            Ok(()) => Outcome::Ok,
+            Err(CommandOutputErrorKind::NotFound) => Outcome::NotFound,
+            Err(_) => Outcome::Error,
+        });
+    }
 }
