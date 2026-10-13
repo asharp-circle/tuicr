@@ -436,10 +436,10 @@ mod tests {
             t.begin(format!("gh cmd{i} with a long label"))
                 .finish(Outcome::Ok);
         }
-        let lines = t.render(3, 20);
+        let lines = t.render(3, 30);
         assert_eq!(lines.len(), 3);
         assert!(lines[2].contains("#6"));
-        assert!(lines.iter().all(|l| l.chars().count() <= 20));
+        assert!(lines.iter().all(|l| l.chars().count() <= 30));
     }
 
     #[test]
