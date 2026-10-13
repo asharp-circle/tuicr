@@ -144,23 +144,28 @@ out to.
 | `TMUX`, `ZELLIJ`, `SSH_TTY` | Detected to choose a clipboard path — OSC 52 over SSH, `tmux load-buffer` inside tmux |
 | `XDG_SESSION_TYPE` | Picks `wl-copy` on Wayland or `xclip` on X11 |
 
-### Startup command timing
-
-When stdin and stderr are terminals, a startup that runs longer than about 250 ms
-shows a live block on stderr before the review screen: total startup time, then
-each `gh` and `chd` command with an ID, a sanitized label, and its own elapsed
-time (`running`) or final state (`ok`, `error`, `timeout`, `not found`,
-`cancelled`). Parallel commands show individual durations, not a sum. Header and
-field values, stdin payloads, tokens, and free text appear as `<redacted>`. The
-block is erased before the TUI starts, on error exit, and on panic. It is not
-shown with non-terminal stdin or stderr or `TERM=dumb`, and it never writes to
-stdout. Only command boundaries are timed, not the HTTP requests inside `chd`.
-
 Set `TUICR_PROFILE` to `1`, `true`, `on`, or `yes` to log to
 `tuicr-profile.<timestamp>.log` in the system temp directory. Any other
 non-empty value is treated as the log path itself; `0`, `false`, `off`, `no`,
 and an empty value disable profiling. `TUICR_PROFILE_FILE` overrides the path
 either way, but only when `TUICR_PROFILE` is enabled.
+
+### Startup command timing
+
+When stdin and stderr are terminals, a startup longer than about 250 ms shows
+a live timing block on stderr before the review screen. The block displays
+total startup time, then each `gh` and `chd` command with its ID, sanitized
+label, and elapsed time (`running`) or final state (`ok`, `error`, `timeout`,
+`not found`, `cancelled`). Parallel commands show individual durations, not a
+sum. Header and field values, stdin payloads, tokens, and free text appear as
+`<redacted>`.
+
+The block is erased before the TUI starts, on error exit, and on panic. On
+Unix it is also erased on Ctrl-C, SIGTERM, or SIGHUP, except for signals
+already ignored at launch (such as under `nohup`). Below 30 columns, tuicr
+shows only the total line. The block never appears when stdin or stderr is not
+a terminal or when `TERM=dumb`, and it never writes to stdout. Only command
+boundaries are timed, not the HTTP requests inside `chd`.
 
 ## Output for scripts and agents
 

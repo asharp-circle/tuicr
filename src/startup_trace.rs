@@ -1,10 +1,8 @@
-//! Live startup display of `gh` / `chd` subprocess timing.
+//! Live startup display of `gh` and `chd` subprocess timing during `App::new`.
 //!
-//! The blocking PR open in `App::new` runs before the TUI owns the terminal,
-//! so a plain-text block on **stderr** is drawn (never stdout, which may carry
-//! `--stdout` export output or subprocess data). Only sanitized command
-//! labels are shown; stdin payloads, header/field values and free text are
-//! redacted. Tracking covers command boundaries only, not internal HTTP.
+//! Drawn to stderr so stdout remains available for `--stdout` export or pipes.
+//! Command labels redact payloads and free text; tracking covers process
+//! boundaries, not internal HTTP.
 
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -55,8 +53,7 @@ pub struct Tracker {
     entries: Mutex<Vec<Entry>>,
 }
 
-/// Finishes its command as `Cancelled` if dropped without `finish`
-/// (early return, unwinding panic).
+/// Finishes the command as `Cancelled` if dropped before `finish`.
 pub struct Guard {
     tracker: Arc<Tracker>,
     id: u64,
@@ -107,9 +104,8 @@ impl Tracker {
         (self.clock)().saturating_sub(self.origin)
     }
 
-    /// Render the block: header with total elapsed, then the newest rows that
-    /// fit `max_rows`. Each command shows its own elapsed time; concurrent
-    /// durations are never summed.
+    /// Renders the header and newest rows up to `max_rows`. Each command
+    /// shows its own elapsed time without summing concurrent durations.
     pub fn render(&self, max_rows: usize, width: usize) -> Vec<String> {
         let now = (self.clock)();
         let entries = self.lock().clone();
@@ -169,8 +165,14 @@ fn fmt_duration(d: Duration) -> String {
 }
 
 fn fit(line: String, width: usize) -> String {
-    if width < 4 || line.chars().count() < width {
+    if width == 0 {
+        return String::new();
+    }
+    if line.chars().count() < width {
         return line;
+    }
+    if width < 4 {
+        return line.chars().take(width.saturating_sub(1)).collect();
     }
     let mut out: String = line.chars().take(width.saturating_sub(2)).collect();
     out.push('…');
@@ -249,7 +251,7 @@ fn sanitize_token(arg: &str) -> String {
     }
 }
 
-// ---- process-wide tracker used by the subprocess boundaries ----
+// Process-wide tracker used at subprocess boundaries.
 
 static ACTIVE: Mutex<Option<Arc<Tracker>>> = Mutex::new(None);
 
@@ -261,8 +263,7 @@ pub fn is_traced_program(program: &str) -> bool {
     matches!(program, "gh" | "chd")
 }
 
-/// Begin tracking a `gh` or `chd` command; `None` when startup display is off
-/// or the program is not one we show.
+/// Tracks a `gh` or `chd` command; `None` for other programs or display off.
 pub fn begin_command(program: &str, args: &[String]) -> Option<Guard> {
     if !is_traced_program(program) {
         return None;
@@ -284,8 +285,7 @@ fn erase_and_draw<W: Write>(out: &mut W, lines: &[String]) {
     draw_block(out, lines, false);
 }
 
-/// Draw under the `DRAWN` lock; when `respect_stop`, skip if a stop (panic
-/// hook or `stop()`) already erased the block.
+/// Draws under lock; with `respect_stop`, skips if a stop already ran.
 fn draw_block<W: Write>(out: &mut W, lines: &[String], respect_stop: bool) {
     let mut drawn = DRAWN.lock().unwrap_or_else(|e| e.into_inner());
     if respect_stop && STOP.load(Ordering::SeqCst) {
@@ -307,13 +307,51 @@ fn draw_block<W: Write>(out: &mut W, lines: &[String], respect_stop: bool) {
 
 /// Erase the block if a display is active; safe from a panic hook.
 pub fn emergency_stop() {
+    emergency_stop_to(&mut std::io::stderr());
+}
+
+fn emergency_stop_to<W: Write>(out: &mut W) {
     if active().is_none() {
         return;
     }
     STOP.store(true, Ordering::SeqCst);
-    let mut err = std::io::stderr();
-    erase_and_draw(&mut err, &[]);
+    erase_and_draw(out, &[]);
     *ACTIVE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Erases the display on SIGINT/SIGTERM/SIGHUP and triggers default action.
+/// Installed once for process lifetime on a thread, not in the signal handler.
+#[cfg(unix)]
+fn install_signal_eraser() {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+    static INSTALLED: OnceLock<()> = OnceLock::new();
+    INSTALLED.get_or_init(|| {
+        // Leave signals ignored at launch (`nohup`) ignored.
+        let handled: Vec<i32> = [SIGINT, SIGTERM, SIGHUP]
+            .into_iter()
+            .filter(|&sig| !is_ignored(sig))
+            .collect();
+        let Ok(mut signals) = signal_hook::iterator::Signals::new(handled) else {
+            return;
+        };
+        std::thread::spawn(move || {
+            if let Some(signal) = signals.forever().next() {
+                emergency_stop();
+                let _ = signal_hook::low_level::emulate_default_handler(signal);
+                std::process::exit(128 + signal);
+            }
+        });
+    });
+}
+
+#[cfg(unix)]
+fn is_ignored(signal: i32) -> bool {
+    // SAFETY: a null `act` only queries the current disposition.
+    unsafe {
+        let mut old: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(signal, std::ptr::null(), &mut old) == 0
+            && old.sa_sigaction == libc::SIG_IGN
+    }
 }
 
 /// Running startup display; stops (erasing itself) on `stop` or drop.
@@ -337,6 +375,8 @@ impl StartupDisplay {
         let tracker = Tracker::new(Arc::new(move || origin.elapsed()));
         STOP.store(false, Ordering::SeqCst);
         *ACTIVE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::clone(&tracker));
+        #[cfg(unix)]
+        install_signal_eraser();
         let handle = std::thread::spawn(move || {
             let mut err = std::io::stderr();
             while !STOP.load(Ordering::SeqCst) {
@@ -443,6 +483,126 @@ mod tests {
     }
 
     #[test]
+    fn tiny_widths_never_exceed_width() {
+        for width in 0..4 {
+            assert!(fit("tuicr starting... 1.0s".into(), width).chars().count() <= width);
+        }
+        let (_ms, t) = fake();
+        for width in 0..4 {
+            assert!(t.render(5, width)[0].chars().count() <= width);
+        }
+    }
+
+    /// Kills and reaps the child on drop so failed assertions cannot leak it.
+    #[cfg(unix)]
+    struct ChildGuard(std::process::Child);
+
+    #[cfg(unix)]
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[cfg(unix)]
+    fn spawn_signal_child(ignore_hup: bool) -> ChildGuard {
+        use std::io::Read;
+        let exe = std::env::current_exe().unwrap();
+        let test = "startup_trace::tests::signal_child_entry";
+        let mut command = if ignore_hup {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c")
+                .arg(r#"trap '' HUP; exec "$0" --exact "$1" --nocapture"#)
+                .arg(exe)
+                .arg(test);
+            c
+        } else {
+            let mut c = std::process::Command::new(exe);
+            c.args(["--exact", test, "--nocapture"]);
+            c
+        };
+        let mut child = ChildGuard(
+            command
+                .env("TUICR_SIGNAL_CHILD", "1")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let mut stdout = child.0.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            let mut byte = [0u8; 1];
+            while !String::from_utf8_lossy(&seen).contains("READY") {
+                if !matches!(stdout.read(&mut byte), Ok(1)) {
+                    break;
+                }
+                seen.push(byte[0]);
+            }
+            let _ = tx.send(String::from_utf8_lossy(&seen).contains("READY"));
+        });
+        let ready = rx.recv_timeout(Duration::from_secs(10));
+        assert_eq!(ready, Ok(true), "child never reported READY");
+        child
+    }
+
+    #[cfg(unix)]
+    fn kill_signal(child: &ChildGuard, name: &str) {
+        let status = std::process::Command::new("kill")
+            .args([format!("-{name}"), child.0.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    /// Entry point re-executed by the signal tests; a no-op in a normal run.
+    #[cfg(unix)]
+    #[test]
+    fn signal_child_entry() {
+        if std::env::var("TUICR_SIGNAL_CHILD").is_err() {
+            return;
+        }
+        let mut display = StartupDisplay::start();
+        display.stop();
+        println!("READY");
+        let _ = std::io::stdout().flush();
+        std::thread::sleep(Duration::from_secs(10));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn signals_keep_default_action_after_display_stops() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut child = spawn_signal_child(false);
+        kill_signal(&child, "TERM");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "SIGTERM was ignored after stop()"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert_eq!(status.signal(), Some(15));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_ignored_sighup_stays_ignored() {
+        let child = spawn_signal_child(true);
+        kill_signal(&child, "HUP");
+        std::thread::sleep(Duration::from_millis(500));
+        let mut child = child;
+        let survived = child.0.try_wait().unwrap().is_none();
+        assert!(survived, "ignored SIGHUP terminated the process");
+    }
+
+    #[test]
     fn very_narrow_width_shows_header_only() {
         let (_ms, t) = fake();
         let _g = t.begin("gh x".into());
@@ -498,6 +658,7 @@ mod tests {
 
     #[test]
     fn draw_and_erase_emit_cursor_sequences() {
+        let _serial = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = Vec::new();
         erase_and_draw(&mut out, &["a".into(), "b".into()]);
         erase_and_draw(&mut out, &[]);
@@ -522,5 +683,18 @@ mod tests {
             .expect("tracked gh command");
         assert!(ours.contains("gh --tuicr-no-such-flag <redacted>"));
         assert!(!ours.contains("running"));
+    }
+
+    #[test]
+    fn emergency_stop_deactivates_tracking_and_is_idempotent() {
+        let _serial = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (_ms, t) = fake();
+        install_for_test(Some(t));
+        assert!(begin_command("gh", &[]).is_some());
+        let mut sink = Vec::new();
+        emergency_stop_to(&mut sink);
+        assert!(begin_command("gh", &[]).is_none());
+        emergency_stop_to(&mut sink);
+        assert_eq!(*DRAWN.lock().unwrap(), 0);
     }
 }

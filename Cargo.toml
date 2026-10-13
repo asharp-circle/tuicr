@@ -76,6 +76,11 @@ two-face = { version = "0.5", default-features = false, features = ["syntect-def
 terminal-colorsaurus = "1"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 
+# Erase the startup timing block on Ctrl-C/SIGTERM/SIGHUP before exiting.
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"
+libc = "0.2"
+
 # Git operations
 [target.'cfg(not(target_env = "musl"))'.dependencies]
 git2 = { version = "0.20", default-features = false }

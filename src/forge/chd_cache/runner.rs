@@ -104,7 +104,12 @@ fn run_program(program: &str, args: &[String], timeout: Duration) -> Option<Stri
             return None;
         }
     };
-    let mut stdout = child.stdout.take()?;
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        finish(Outcome::Error);
+        return None;
+    };
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         let _ = stdout.read_to_end(&mut bytes);
@@ -131,7 +136,10 @@ fn run_program(program: &str, args: &[String], timeout: Duration) -> Option<Stri
             }
         }
     };
-    let bytes = reader.join().ok()?;
+    let Ok(bytes) = reader.join() else {
+        finish(Outcome::Error);
+        return None;
+    };
     finish(if status.success() {
         Outcome::Ok
     } else {
