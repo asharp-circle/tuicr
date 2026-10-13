@@ -145,9 +145,8 @@ impl Tracker {
 }
 
 impl Tracker {
-    /// Durable end-of-startup summary: total time and every command with its
-    /// own duration and status. Commands still running are marked `unfinished`.
-    /// Never truncated, so scrollback keeps the full sanitized label.
+    /// Formats the startup summary with full labels for scrollback; commands
+    /// still running are marked `unfinished`.
     pub fn summary(&self) -> Vec<String> {
         let now = (self.clock)();
         let mut entries = self.lock();
@@ -333,16 +332,13 @@ fn draw_block<W: Write>(out: &mut W, lines: &[String], respect_stop: bool) {
     let _ = out.flush();
 }
 
-/// Finalize the display (panic hook, signals): see `finalize_to`.
+/// Finalizes the display on panic or signal. See `finalize_to`.
 pub fn emergency_stop() {
     finalize_to(&mut std::io::stderr());
 }
 
-/// Replace the live block with the durable summary, exactly once.
-///
-/// The summary is plain text ending in a newline and is never erased, so it
-/// stays in terminal scrollback after the TUI exits. Silent when no `gh` or
-/// `chd` command ran or when already finalized.
+/// Replaces the live block with the scrollback summary once. Silent if no
+/// command ran or already finalized.
 fn finalize_to<W: Write>(out: &mut W) {
     let mut drawn = DRAWN.lock().unwrap_or_else(|e| e.into_inner());
     STOP.store(true, Ordering::SeqCst);
@@ -406,8 +402,8 @@ pub struct StartupDisplay {
 }
 
 impl StartupDisplay {
-    /// Always track; redraw live only when stderr and stdin are terminals and
-    /// `TERM` is capable. Other stderr gets just the final summary.
+    /// Tracks startup commands, redrawing live only on capable interactive
+    /// terminals; other stderr gets just the final summary.
     pub fn start_for_startup() -> Self {
         let capable = std::env::var("TERM").map(|t| t != "dumb").unwrap_or(false);
         let live = std::io::stderr().is_terminal() && std::io::stdin().is_terminal() && capable;
