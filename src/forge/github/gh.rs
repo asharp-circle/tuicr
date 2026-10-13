@@ -257,6 +257,7 @@ where
                 .map(GhPullRequestFile::into_metadata)
                 .collect::<Result<Vec<_>>>()
         {
+            crate::forge::chd_cache::note_consumed("files");
             return Ok(metadata);
         }
         self.pull_request_file_metadata_live(pr)
@@ -269,6 +270,7 @@ where
         let rows = crate::forge::chd_cache::take_stashed_reviews(pr)?;
         let reviews = parse_rest_reviews(&rows)?;
         let viewer_login = self.current_viewer(&pr.repository).ok().flatten()?;
+        crate::forge::chd_cache::note_consumed("reviews");
         Some(crate::forge::traits::PullRequestReviewMetadata {
             viewer_login: Some(viewer_login),
             reviews,
@@ -476,9 +478,14 @@ where
         // GitHub paginates `pulls/<num>/commits` at 250 commits per page (max
         // per_page=100; PRs are capped at 250 commits via the API). Paginate
         // explicitly so multi-page PRs work; bound the loop defensively.
-        if let Some(rows) = crate::forge::chd_cache::get_list(pr, "commits")
-            .and_then(|json| serde_json::from_str::<Vec<GhPrCommit>>(&json).ok())
+        if let Some((rows, source)) = crate::forge::chd_cache::get_list_sourced(pr, "commits")
+            .and_then(|(json, source)| {
+                serde_json::from_str::<Vec<GhPrCommit>>(&json)
+                    .ok()
+                    .map(|rows| (rows, source))
+            })
         {
+            crate::forge::chd_cache::note_consumed(source);
             return Ok(rows
                 .into_iter()
                 .map(GhPrCommit::into_pull_request_commit)
@@ -555,6 +562,7 @@ where
         }
 
         if let Some(sha) = crate::forge::chd_cache::stashed_merge_base(pr) {
+            crate::forge::chd_cache::note_consumed("merge_base");
             return Some(sha);
         }
 

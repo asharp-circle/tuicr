@@ -19,6 +19,8 @@ struct OpenBundle {
     reviews: Option<String>,
     merge_base: Option<String>,
     commits: Option<String>,
+    /// Per-resource provenance, e.g. `files=validated_cache(pages=2,304=2)`.
+    provenance: String,
 }
 
 /// Stashed bundle and sequence number for the most recent open.
@@ -83,6 +85,11 @@ pub fn open_bundle(repo: &ForgeRepository, number: u64) -> Option<(String, Strin
     let mut bundle = parse_open_bundle(&out, repo, number)?;
     bundle.ticket = ticket;
     let identity = (bundle.head.clone(), bundle.base.clone());
+    crate::profile::time_with(
+        "pr.chd_bundle_provenance",
+        || (),
+        |_| bundle.provenance.clone(),
+    );
     store_if_newer(bundle);
     Some(identity)
 }
@@ -115,7 +122,39 @@ fn parse_open_bundle(json: &str, repo: &ForgeRepository, number: u64) -> Option<
         reviews: rows("reviews"),
         merge_base: sha("merge_base").filter(|m| m.len() == 40),
         commits: rows("commits"),
+        provenance: summarize_provenance(v.get("provenance")),
     })
+}
+
+/// Flattens chd's per-resource provenance into one sorted, human-readable line.
+fn summarize_provenance(prov: Option<&serde_json::Value>) -> String {
+    let Some(map) = prov.and_then(|p| p.as_object()) else {
+        return "none".to_string();
+    };
+    let mut parts: Vec<String> = map
+        .iter()
+        .map(|(name, r)| {
+            let outcome = r
+                .get("outcome")
+                .and_then(|o| o.as_str())
+                .unwrap_or("unknown");
+            let n = |k: &str| r.get(k).and_then(|x| x.as_u64());
+            match (n("pages"), n("http_200"), n("http_304")) {
+                (Some(p), Some(a), Some(b)) => {
+                    format!("{name}={outcome}(pages={p},200={a},304={b})")
+                }
+                _ => format!("{name}={outcome}"),
+            }
+        })
+        .collect();
+    parts.sort();
+    parts.join(" ")
+}
+
+/// Records that a consumer parsed and accepted a bundle part. Call it only
+/// after acceptance, so a part that falls back to a live fetch is not counted.
+pub fn note_consumed(part: &'static str) {
+    crate::profile::time_with("pr.chd_bundle_consumed", || (), |_| part.to_string());
 }
 
 /// Reads the stashed bundle if repository, number, head, and base match.
@@ -190,6 +229,19 @@ mod tests {
         assert_eq!(b.merge_base.as_deref(), Some("c".repeat(40).as_str()));
         assert!(parse_open_bundle(r#"{"head":"","base":"b"}"#, &repo, 1).is_none());
         assert!(parse_open_bundle("nope", &repo, 1).is_none());
+    }
+
+    #[test]
+    fn provenance_is_summarized_per_resource_and_tolerates_absence() {
+        let repo = ForgeRepository::github("github.com", "o", "r");
+        let j = r#"{"head":"h","base":"b","provenance":{"files":{"outcome":"validated_cache","pages":2,"http_200":0,"http_304":2},"commits":{"outcome":"miss"},"pr":{"outcome":"validated_cache"}}}"#;
+        let b = parse_open_bundle(j, &repo, 1).unwrap();
+        assert_eq!(
+            b.provenance,
+            "commits=miss files=validated_cache(pages=2,200=0,304=2) pr=validated_cache"
+        );
+        let old = parse_open_bundle(r#"{"head":"h","base":"b"}"#, &repo, 1).unwrap();
+        assert_eq!(old.provenance, "none");
     }
 
     #[test]

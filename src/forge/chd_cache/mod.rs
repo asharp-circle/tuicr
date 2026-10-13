@@ -9,7 +9,8 @@ mod bundle;
 mod runner;
 
 pub use bundle::{
-    open_bundle, stashed_commits, stashed_files, stashed_merge_base, take_stashed_reviews,
+    note_consumed, open_bundle, stashed_commits, stashed_files, stashed_merge_base,
+    take_stashed_reviews,
 };
 #[cfg(test)]
 pub(crate) use runner::install_fake_chd;
@@ -34,15 +35,26 @@ fn key_args(op: &str, pr: &PullRequestDetails) -> Vec<String> {
 
 /// Cached PR collection rows for this head and base tip.
 pub fn get_list(pr: &PullRequestDetails, name: &str) -> Option<String> {
+    get_list_sourced(pr, name).map(|(rows, _)| rows)
+}
+
+/// Where a cached collection came from, so provenance names the real source.
+pub const FROM_BUNDLE: &str = "commits.bundle";
+pub const FROM_GET_LIST: &str = "commits.get_list";
+
+/// Like [`get_list`], also returning the provenance label of the serving path.
+pub fn get_list_sourced(pr: &PullRequestDetails, name: &str) -> Option<(String, &'static str)> {
     if !enabled() || pr.head_sha.is_empty() || pr.base_sha.is_empty() {
         return None;
     }
     if name == "commits"
         && let Some(rows) = stashed_commits(pr)
     {
-        return Some(rows);
+        return Some((rows, FROM_BUNDLE));
     }
-    run_chd(&list_args("get-list", pr, name), READ_TIMEOUT).filter(|rows| !rows.is_empty())
+    run_chd(&list_args("get-list", pr, name), READ_TIMEOUT)
+        .filter(|rows| !rows.is_empty())
+        .map(|rows| (rows, FROM_GET_LIST))
 }
 
 /// Request a background cache fill for this PR collection.
@@ -158,6 +170,41 @@ fn pr() -> PullRequestDetails {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn commit_list_source_distinguishes_bundle_from_standalone_cache() {
+        use crate::forge::chd_cache::runner::install_fake_chd;
+        let repo = pr().repository;
+        install_fake_chd(Some(std::rc::Rc::new(|args| {
+            if args.get(1).map(String::as_str) == Some("open") {
+                Some(r#"{"head":"a","base":"b"}"#.to_string())
+            } else {
+                Some("[1]".to_string())
+            }
+        })));
+        // No bundle commits: the standalone get-list serves and is labelled so.
+        let mut p = pr();
+        p.head_sha = "a".into();
+        p.base_sha = "b".into();
+        let _ = open_bundle(&repo, p.number);
+        assert_eq!(
+            get_list_sourced(&p, "commits"),
+            Some(("[1]".into(), FROM_GET_LIST))
+        );
+        install_fake_chd(Some(std::rc::Rc::new(|args| {
+            Some(if args.get(1).map(String::as_str) == Some("open") {
+                r#"{"head":"a","base":"b","commits":[2]}"#.to_string()
+            } else {
+                "[1]".to_string()
+            })
+        })));
+        let _ = open_bundle(&repo, p.number);
+        assert_eq!(
+            get_list_sourced(&p, "commits"),
+            Some(("[2]".into(), FROM_BUNDLE))
+        );
+        install_fake_chd(None);
+    }
 
     #[test]
     fn hit_skips_live_fetch() {
